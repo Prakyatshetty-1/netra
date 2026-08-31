@@ -9,26 +9,28 @@ function collapseEdges(edges) {
     const key = a < b ? `${a}|${b}` : `${b}|${a}`;
     const conf = e.confidence ?? e.ConfidenceScore ?? 0.5;
     const prev = map.get(key);
-    if (!prev) {
-      map.set(key, {
-        id: "e" + e.id,
-        source: e.source,
-        target: e.target,
-        relation: e.relation,
-        burst: !!e.burst,
-        highlighted: !!e.highlighted,
-        confidence: conf,
-      });
-    } else {
-      prev.burst = prev.burst || !!e.burst;
-      prev.highlighted = prev.highlighted || !!e.highlighted;
-      prev.confidence = Math.max(prev.confidence, conf);
-    }
+        if (!prev) {
+          map.set(key, {
+            id: "e" + e.id,
+            source: e.source,
+            target: e.target,
+            relation: e.relation,
+            burst: !!e.burst,
+            highlighted: !!e.highlighted,
+            confidence: conf,
+            source_type: e.source_type || "",
+          });
+        } else {
+          prev.burst = prev.burst || !!e.burst;
+          prev.highlighted = prev.highlighted || !!e.highlighted;
+          prev.confidence = Math.max(prev.confidence, conf);
+          if ((e.source_type || "") === "PDF_UPLOAD") prev.source_type = "PDF_UPLOAD";
+        }
   }
   return [...map.values()];
 }
 
-export default function GraphCanvas({ graphData, onNodeClick }) {
+export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
   const clickRef = useRef(onNodeClick);
@@ -56,7 +58,15 @@ export default function GraphCanvas({ graphData, onNodeClick }) {
       });
     }
     for (const e of collapsed) {
-      const classes = [e.burst ? "burst" : "", e.highlighted ? "hl" : ""].filter(Boolean).join(" ");
+      const srcType = e.source_type || "";
+      const dashed = srcType === "PDF_UPLOAD" || srcType === "TOWER_LOG";
+      const classes = [
+        e.burst ? "burst" : "",
+        e.highlighted ? "hl" : "",
+        dashed ? "pdf" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       elements.push({ data: e, classes });
     }
 
@@ -130,6 +140,22 @@ export default function GraphCanvas({ graphData, onNodeClick }) {
             "curve-style": "straight",
           },
         },
+        {
+          selector: "edge.pdf",
+          style: {
+            "line-style": "dashed",
+            width: 2,
+            "line-color": "#5b8def",
+            "curve-style": "straight",
+          },
+        },
+        {
+          selector: "node.picked",
+          style: {
+            "border-width": 3,
+            "border-color": "#e8952e",
+          },
+        },
       ],
     });
 
@@ -140,6 +166,8 @@ export default function GraphCanvas({ graphData, onNodeClick }) {
 
     cy.on("tap", "node", (evt) => {
       const d = evt.target.data();
+      cy.nodes().removeClass("picked");
+      evt.target.addClass("picked");
       if (clickRef.current) clickRef.current(d.id);
     });
 
@@ -149,6 +177,16 @@ export default function GraphCanvas({ graphData, onNodeClick }) {
       if (cyRef.current === cy) cyRef.current = null;
     };
   }, [graphData]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.nodes().removeClass("picked");
+    if (selectedPersonId != null) {
+      const n = cy.getElementById(`PERSON:${selectedPersonId}`);
+      if (n && n.length) n.addClass("picked");
+    }
+  }, [selectedPersonId]);
 
   return <div className="graph-canvas" ref={containerRef} />;
 }

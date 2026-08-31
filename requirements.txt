@@ -4,3 +4,5 @@ networkx>=3.2
 rapidfuzz>=3.6
 numpy>=1.26
 python-multipart>=0.0.9
+pdfplumber>=0.11
+spacy>=3.7

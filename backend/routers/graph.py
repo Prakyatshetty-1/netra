@@ -1,6 +1,6 @@
 """Graph JSON + name search highlight."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from backend.services.graph_service import highlight_from_name
 from backend.services.intelligence_service import enrich_case_graph
@@ -29,6 +29,4 @@ def get_graph(case_id: int):
 @router.get("/cases/{case_id}/graph/search")
 def search_graph(case_id: int, name: str = Query(..., min_length=1)):
     payload = enrich_case_graph(case_id)
-    if not payload["nodes"]:
-        raise HTTPException(404, "No graph for this case")
     return _public(highlight_from_name(payload, name))

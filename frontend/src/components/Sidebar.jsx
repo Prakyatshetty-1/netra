@@ -1,4 +1,21 @@
-export default function Sidebar({ cases, selectedCaseId, selectedCase, onSelectCase, error }) {
+const NAV = [
+  { id: "graph", label: "Graph" },
+  { id: "identity", label: "Identity" },
+  { id: "dna", label: "Case DNA" },
+  { id: "hypotheses", label: "Hypotheses" },
+  { id: "upload", label: "Upload Document" },
+  { id: "copilot", label: "Copilot" },
+];
+
+export default function Sidebar({
+  cases,
+  selectedCaseId,
+  selectedCase,
+  onSelectCase,
+  error,
+  page,
+  onNav,
+}) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -22,7 +39,7 @@ export default function Sidebar({ cases, selectedCaseId, selectedCase, onSelectC
         </select>
       </label>
       <div className="case-meta">
-        {error && <div>{error}. Is the FastAPI backend running?</div>}
+        {error && <div className="error-inline">{error}. Is the FastAPI backend running?</div>}
         {selectedCase && (
           <>
             <div>
@@ -37,11 +54,16 @@ export default function Sidebar({ cases, selectedCaseId, selectedCase, onSelectC
         )}
       </div>
       <nav className="nav">
-        <button type="button" className="nav-btn active">Graph</button>
-        <button type="button" className="nav-btn">Identity</button>
-        <button type="button" className="nav-btn">Case DNA</button>
-        <button type="button" className="nav-btn">Hypotheses</button>
-        <button type="button" className="nav-btn">Copilot</button>
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`nav-btn ${page === item.id ? "active" : ""}`}
+            onClick={() => onNav(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
       </nav>
     </aside>
   );

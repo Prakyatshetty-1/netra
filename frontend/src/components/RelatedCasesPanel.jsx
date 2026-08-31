@@ -3,7 +3,7 @@ const CHANNELS = ["topology", "temporal", "financial", "roles"];
 export default function RelatedCasesPanel({ relatedCases }) {
   const rows = relatedCases?.related || [];
   return (
-    <article className="panel-card dna">
+    <article className="panel-card dna" id="dnaCard">
       <h2>
         Related Cases (Case DNA) <span className="badge-new">NEW</span>
       </h2>

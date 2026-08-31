@@ -23,6 +23,12 @@ npm run dev
 
 Open the URL Vite prints (usually **http://localhost:5173**).
 
+After installing Python deps, once:
+
+```bash
+python -m spacy download en_core_web_sm
+```
+
 `VITE_API_BASE_URL` in `.env` must match wherever uvicorn is listening.
 
 ```bash

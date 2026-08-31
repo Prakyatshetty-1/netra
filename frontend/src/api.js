@@ -2,6 +2,13 @@ import axios from "axios";
 
 const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+export function apiError(err) {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((x) => x.msg || JSON.stringify(x)).join("; ");
+  return err?.message || "Request failed";
+}
+
 export const getCases = () => axios.get(`${BASE}/cases`).then((r) => r.data);
 
 export const getCaseGraph = (caseId) =>
@@ -32,3 +39,13 @@ export const askCopilot = (caseId, question) =>
 
 export const postDecision = (caseId, payload) =>
   axios.post(`${BASE}/cases/${caseId}/decisions`, payload).then((r) => r.data);
+
+export const uploadPdf = (caseId, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  // Let the browser set multipart boundary — do not force Content-Type.
+  return axios.post(`${BASE}/cases/${caseId}/upload-pdf`, form).then((r) => r.data);
+};
+
+export const confirmExtraction = (caseId, payload) =>
+  axios.post(`${BASE}/cases/${caseId}/upload-pdf/confirm`, payload).then((r) => r.data);

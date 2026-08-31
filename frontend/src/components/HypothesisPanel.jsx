@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { getHypotheses } from "../api";
+import { apiError, getHypotheses } from "../api";
 
 export default function HypothesisPanel({ caseId, personId, personLabel }) {
   const [hypotheses, setHypotheses] = useState([]);
   const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (caseId == null || personId == null) {
       setHypotheses([]);
+      setErr(null);
       return undefined;
     }
     let cancelled = false;
+    setLoading(true);
     getHypotheses(caseId, personId)
       .then((data) => {
         if (cancelled) return;
@@ -19,7 +22,13 @@ export default function HypothesisPanel({ caseId, personId, personLabel }) {
         setErr(null);
       })
       .catch((e) => {
-        if (!cancelled) setErr(e.message);
+        if (!cancelled) {
+          setHypotheses([]);
+          setErr(apiError(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -27,14 +36,15 @@ export default function HypothesisPanel({ caseId, personId, personLabel }) {
   }, [caseId, personId]);
 
   return (
-    <article className="panel-card hyp">
+    <article className="panel-card hyp" id="hypCard">
       <h2>Competing Hypotheses</h2>
       <p className="muted">
         {personId == null
-          ? "Select a person node to score H1–H4."
+          ? "Select a PERSON node on the graph to score H1–H4."
           : `${personLabel || "Person"} (${personId})`}
       </p>
-      {err && <p className="muted">{err}</p>}
+      {loading && <p className="muted">Loading hypotheses…</p>}
+      {err && <p className="error-inline">{err}</p>}
       <div className="hyp-grid">
         {hypotheses.map((h, i) => (
           <div className={`hyp-card ${i === 0 ? "lead" : ""}`} key={h.type}>

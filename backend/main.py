@@ -14,6 +14,7 @@ from backend.routers import (
     copilot,
     counterfactual,
     decisions,
+    extraction,
     graph,
     hypothesis,
     identity,
@@ -32,6 +33,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(cases.router)
@@ -43,6 +45,7 @@ app.include_router(contradiction.router)
 app.include_router(counterfactual.router)
 app.include_router(copilot.router)
 app.include_router(decisions.router)
+app.include_router(extraction.router)
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 

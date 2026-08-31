@@ -52,9 +52,33 @@ def _fetch_labels(nodes: dict[str, dict[str, Any]]) -> None:
                 kind = row["VehicleType"] or "Vehicle"
                 nodes[key]["label"] = f"{kind} {row['RegistrationNumber']}"
 
+    phones = [n["entity_id"] for n in nodes.values() if n["type"] == "PHONE"]
+    if phones:
+        placeholders = ",".join("?" * len(phones))
+        for row in query(
+            f"SELECT PhoneID, PhoneNumber FROM PhoneNumber WHERE PhoneID IN ({placeholders})",
+            phones,
+        ):
+            key = node_key("PHONE", row["PhoneID"])
+            if key in nodes:
+                nodes[key]["label"] = row["PhoneNumber"]
+
+    group_types = ("LOCATION", "DATE", "ORG", "PHONE", "VEHICLE")
+    group_ids = [n["entity_id"] for n in nodes.values() if n["type"] in group_types and n["entity_id"]]
+    if group_ids:
+        placeholders = ",".join("?" * len(group_ids))
+        for row in query(
+            f"SELECT GroupID, EventDescription FROM EvidenceIndependenceGroup WHERE GroupID IN ({placeholders})",
+            group_ids,
+        ):
+            for kind in group_types:
+                key = node_key(kind, row["GroupID"])
+                if key in nodes and row["EventDescription"]:
+                    nodes[key]["label"] = row["EventDescription"]
+
     for n in nodes.values():
-        if n["type"] == "LOCATION" and not n.get("label"):
-            n["label"] = "Incident scene"
+        if n["type"] == "LOCATION" and (n.get("label") == n["id"] or not n.get("label")):
+            n["label"] = "Incident scene" if n["entity_id"] == 0 else n.get("label") or n["id"]
 
 
 def fetch_case_edges(case_id: int) -> list[dict[str, Any]]:

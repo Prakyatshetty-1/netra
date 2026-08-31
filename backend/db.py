@@ -20,6 +20,16 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def get_write_conn() -> sqlite3.Connection:
+    """Writable connection — used only by PDF confirm (human-validated inserts)."""
+    if not DB_PATH.exists():
+        raise FileNotFoundError(f"Expected database at {DB_PATH}")
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def query(sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
     conn = get_conn()
     try:

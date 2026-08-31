@@ -1,7 +1,7 @@
 export default function IdentityPanel({ identity }) {
   const candidates = identity?.candidates || [];
   return (
-    <article className="panel-card identity">
+    <article className="panel-card identity" id="identityCard">
       <h2>
         Identity Candidates <span className="badge-new">THRESHOLD</span>
       </h2>
