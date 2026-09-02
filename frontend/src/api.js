@@ -49,3 +49,6 @@ export const uploadPdf = (caseId, file) => {
 
 export const confirmExtraction = (caseId, payload) =>
   axios.post(`${BASE}/cases/${caseId}/upload-pdf/confirm`, payload).then((r) => r.data);
+
+export const createCase = (payload) =>
+  axios.post(`${BASE}/cases`, payload).then((r) => r.data);

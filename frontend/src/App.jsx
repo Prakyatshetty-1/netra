@@ -91,10 +91,21 @@ export default function App() {
     setClickHint("Select a PERSON node (not vehicle/location/account) for hypotheses and counterfactual.");
   }
 
-  async function handleExtractConfirmed() {
+  async function handleExtractConfirmed(graph, meta = {}) {
     setHighlightedGraph(null);
-    await refetchGraph();
-    setPage("graph");
+    if (meta.newCaseId != null) {
+      try {
+        const list = await getCases();
+        setCases(list);
+      } catch (err) {
+        setCasesError(apiError(err) || "Cannot refresh case list");
+      }
+      setSelectedCaseId(meta.newCaseId);
+      setPage("graph");
+    } else {
+      await refetchGraph();
+      setPage("graph");
+    }
   }
 
   return (

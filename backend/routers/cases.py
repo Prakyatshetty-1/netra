@@ -1,10 +1,19 @@
-"""GET /cases and GET /cases/{id}."""
+"""GET /cases and GET /cases/{id}. POST /cases to create a stub from PDF extraction."""
+
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from backend.db import query, query_one
+from backend.db import get_write_conn, query, query_one
 
 router = APIRouter(tags=["cases"])
+
+
+class NewCaseBody(BaseModel):
+    crime_no: str | None = None
+    case_no: str | None = None
+    brief_facts: str | None = None
 
 
 @router.get("/cases")
@@ -91,3 +100,64 @@ def get_case(case_id: int):
             for p in persons
         ],
     }
+
+
+@router.post("/cases")
+def create_case(body: NewCaseBody):
+    """Create a minimal stub case — used when a PDF extraction should live on its own canvas."""
+    conn = get_write_conn()
+    try:
+        cur = conn.cursor()
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        crime_no = body.crime_no or f"PDF-{stamp}"
+        case_no = body.case_no or f"PDF-CASE-{stamp}"
+
+        defaults = query_one(
+            """
+            SELECT PolicePersonID, PoliceStationID, CaseCategoryID,
+                   GravityOffenceID, CrimeMajorHeadID, CrimeMinorHeadID, CourtID
+            FROM CaseMaster ORDER BY CaseMasterID LIMIT 1
+            """
+        )
+        if not defaults:
+            raise HTTPException(500, "Cannot seed new case — no existing cases")
+
+        cur.execute(
+            """
+            INSERT INTO CaseMaster (
+                CrimeNo, CaseNo, CrimeRegisteredDate,
+                PolicePersonID, PoliceStationID, CaseCategoryID, GravityOffenceID,
+                CrimeMajorHeadID, CrimeMinorHeadID, CaseStatusID, CourtID
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                crime_no,
+                case_no,
+                today,
+                defaults["PolicePersonID"],
+                defaults["PoliceStationID"],
+                defaults["CaseCategoryID"],
+                defaults["GravityOffenceID"],
+                defaults["CrimeMajorHeadID"],
+                defaults["CrimeMinorHeadID"],
+                defaults["CourtID"],
+            ),
+        )
+        new_id = int(cur.lastrowid)
+
+        if body.brief_facts:
+            cur.execute(
+                "INSERT INTO Inv_OccuranceTime (CaseMasterID, BriefFacts) VALUES (?, ?)",
+                (new_id, body.brief_facts),
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return get_case(new_id)
