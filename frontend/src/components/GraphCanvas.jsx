@@ -101,7 +101,7 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
             "font-family": "Segoe UI, system-ui, sans-serif",
             "font-size": 10,
             "font-weight": 600,
-            color: "#2a2a2a",
+            color: "#fafafa",
             "text-valign": "center",
             "text-halign": "center",
             "text-wrap": "ellipsis",
@@ -109,35 +109,41 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
             padding: "8px",
             width: "data(cardWidth)",
             height: "data(cardHeight)",
-            "background-color": "#f7f7f7",
-            "border-width": 1.25,
+            "background-color": "#1f1f1f",
+            "border-width": 1.5,
             "border-color": "#3a3a3a",
+            "text-outline-color": "#0a0a0a",
+            "text-outline-width": 2,
+            "text-outline-opacity": 1,
           },
         },
         {
           selector: "node.hl",
           style: {
-            "border-width": 2,
-            "border-color": "#c1121f",
-            "background-color": "#fff5f5",
+            "border-width": 2.5,
+            "border-color": "#ff3d3d",
+            "background-color": "#2a1414",
+            "border-opacity": 1,
           },
         },
         {
           selector: "edge",
           style: {
             width: 1,
-            "line-color": "#c9c9c9",
+            "line-color": "#4a4a4a",
             "curve-style": "haystack",
             "haystack-radius": 0,
-            opacity: 0.95,
+            opacity: 0.9,
           },
         },
         {
           selector: "edge.burst, edge.hl",
           style: {
             width: 3.5,
-            "line-color": "#e10600",
+            "line-color": "#ff6b00",
             "curve-style": "straight",
+            opacity: 1,
+            "line-cap": "round",
           },
         },
         {
@@ -153,15 +159,21 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
           selector: "node.picked",
           style: {
             "border-width": 3,
-            "border-color": "#e8952e",
+            "border-color": "#ff6b00",
+            "background-color": "#261810",
+            "shadow-color": "#ff6b00",
+            "shadow-blur": 12,
+            "shadow-opacity": 0.35,
+            "shadow-offset-x": 0,
+            "shadow-offset-y": 0,
           },
         },
       ],
     });
 
     if (searchActive) {
-      cy.nodes().not(".hl").style({ opacity: 0.28, "border-color": "#9a9a9a" });
-      cy.edges().not(".hl").style({ opacity: 0.18, width: 1, "line-color": "#d0d0d0" });
+      cy.nodes().not(".hl").style({ opacity: 0.22, "border-color": "#555555" });
+      cy.edges().not(".hl").style({ opacity: 0.12, width: 1, "line-color": "#444444" });
     }
 
     cy.on("tap", "node", (evt) => {
