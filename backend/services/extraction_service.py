@@ -20,19 +20,20 @@ RELATION_CONFIDENCE = 0.6  # naive same-sentence co-occurrence — not a trained
 FUZZY_PERSON_THRESHOLD = 85
 
 
-def extract_text(pdf_bytes: bytes) -> tuple[str, bool]:
-    """Return (text, ocr_required). Empty extractable text → ocr_required True, no crash."""
+def extract_text(pdf_bytes: bytes) -> tuple[str, bool, str | None]:
+    """Return (text, ocr_required, error_msg). Empty extractable text → ocr_required True.
+    Missing dependency → error_msg populated so caller can surface it."""
     try:
         import pdfplumber
-    except ImportError:
-        return "", True
+    except ImportError as e:
+        return "", True, f"Missing dependency: {e.name}. Install with: pip install pdfplumber"
 
     pages = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
             pages.append(page.extract_text() or "")
     text = "\n".join(pages).strip()
-    return text, (not bool(text))
+    return text, (not bool(text)), None
 
 
 def _load_nlp():

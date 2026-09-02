@@ -41,7 +41,9 @@ async def upload_pdf(case_id: int, file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Upload a PDF file")
     raw = await file.read()
-    text, ocr_required = extract_text(raw)
+    text, ocr_required, error_msg = extract_text(raw)
+    if error_msg:
+        raise HTTPException(500, error_msg)
     entities = extract_entities(text) if text else []
     relations = extract_relations(entities, text) if text else []
     return {
