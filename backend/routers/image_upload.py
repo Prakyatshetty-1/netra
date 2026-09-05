@@ -10,15 +10,32 @@ from pydantic import BaseModel, Field
 
 from backend.routers.graph import _public
 from backend.services.image_extraction_service import (
+    build_photo_detections,
     confirm_image_extraction,
     detect_faces,
     detect_objects,
     draw_annotated_preview,
     extract_exif,
+    map_confirmed_crops,
+    save_photo_and_crops,
 )
 from backend.services.intelligence_service import enrich_case_graph
 
 router = APIRouter(tags=["image_upload"])
+
+
+class ConfirmedCrop(BaseModel):
+    crop_id: str
+    entity_type: str = "OBJECT"  # PERSON / WEAPON / OBJECT
+    label: str = "object"
+    confidence: float = 0.0
+    included: bool = True
+    linked_person_id: int | None = None
+    matched_person_id: int | None = None
+    matched_person_name: str | None = None
+    force_create_new: bool = False
+    provisional_name: str | None = None
+    embedding: list[float] | None = None
 
 
 class ConfirmedFace(BaseModel):
@@ -49,6 +66,8 @@ class ConfirmedLocation(BaseModel):
 
 
 class ConfirmImageBody(BaseModel):
+    photo_id: int | None = None
+    confirmed_crops: list[ConfirmedCrop] = Field(default_factory=list)
     objects: list[ConfirmedObject] = Field(default_factory=list)
     faces: list[ConfirmedFace] = Field(default_factory=list)
     location: ConfirmedLocation | None = None
@@ -76,6 +95,12 @@ async def upload_image(case_id: int, file: UploadFile = File(...)):
     location = extract_exif(raw)
     preview_url = draw_annotated_preview(raw, objects, faces, low_confidence=low_conf)
 
+    # 1. Unified detections & entity cropping
+    detections = build_photo_detections(raw, objects, low_confidence=low_conf, faces=faces)
+
+    # 2. Persist PhotoEvidence & DetectedEntityCrop rows
+    photo_id = save_photo_and_crops(case_id, file.filename, preview_url, location, detections)
+
     warnings = []
     for msg in (obj_err, face_err):
         if msg:
@@ -84,12 +109,14 @@ async def upload_image(case_id: int, file: UploadFile = File(...)):
         warnings.append("Object detector unavailable. Install ultralytics for YOLO detection.")
 
     return {
+        "photo_id": photo_id,
         "filename": file.filename,
+        "annotated_preview_url": preview_url,
+        "detections": detections,
         "objects": objects,
         "low_confidence_flagged": low_conf,
         "faces": faces,
         "location": location,
-        "annotated_preview_url": preview_url,
         "weapon_model": weapon_tag,
         "warnings": warnings,
     }
@@ -97,9 +124,27 @@ async def upload_image(case_id: int, file: UploadFile = File(...)):
 
 @router.post("/cases/{case_id}/upload-image/confirm")
 def confirm_image(case_id: int, body: ConfirmImageBody):
-    objs = [o.model_dump() for o in body.objects if getattr(o, "included", True)]
-    faces = [f.model_dump() for f in body.faces]
     loc = body.location.model_dump() if body.location else None
-    summary = confirm_image_extraction(case_id, objs, faces, loc, body.filename or "image")
+    if body.confirmed_crops:
+        crops = [c.model_dump() for c in body.confirmed_crops]
+        summary = map_confirmed_crops(
+            case_id=case_id,
+            photo_id=body.photo_id,
+            confirmed_crops=crops,
+            location_data=loc,
+            filename=body.filename or "image",
+        )
+    else:
+        objs = [o.model_dump() for o in body.objects if getattr(o, "included", True)]
+        faces = [f.model_dump() for f in body.faces]
+        summary = confirm_image_extraction(
+            case_id=case_id,
+            confirmed_objects=objs,
+            confirmed_faces=faces,
+            confirmed_location=loc,
+            filename=body.filename or "image",
+            photo_id=body.photo_id,
+        )
     graph = _public(enrich_case_graph(case_id))
     return {**summary, "graph": graph}
+

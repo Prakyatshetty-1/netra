@@ -88,11 +88,13 @@ def enrich_case_graph(case_id: int) -> dict[str, Any]:
                 "id": key,
                 "type": n["type"],
                 "label": n.get("label", key),
+                "image": n.get("image"),
                 "centrality": cent.get(key, 0.0),
                 "community": comm.get(key),
                 "highlighted": False,
             }
         )
+
 
     edge_out = []
     for e in edge_rows:

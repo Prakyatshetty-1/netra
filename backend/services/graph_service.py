@@ -76,13 +76,70 @@ def _fetch_labels(nodes: dict[str, dict[str, Any]]) -> None:
                 if key in nodes and row["EventDescription"]:
                     nodes[key]["label"] = row["EventDescription"]
 
+    # Look up labels and crop images for weapon/object detections
+    crop_ids = [n["entity_id"] for n in nodes.values() if n["type"] in ("WEAPON", "OBJECT") and n["entity_id"]]
+    if crop_ids:
+        placeholders = ",".join("?" * len(crop_ids))
+        try:
+            for row in query(
+                f"SELECT CropID, Label, Confidence, EntityType, CropImagePath FROM DetectedEntityCrop WHERE CropID IN ({placeholders})",
+                crop_ids,
+            ):
+                key = node_key(row["EntityType"], row["CropID"])
+                if key in nodes:
+                    lbl = row["Label"] or "object"
+                    conf_str = f" ({round(float(row['Confidence'] or 0) * 100)}%)" if row["Confidence"] is not None else ""
+                    nodes[key]["label"] = f"{lbl.capitalize()}{conf_str}"
+                    if row["CropImagePath"]:
+                        nodes[key]["image"] = row["CropImagePath"]
+        except Exception:
+            pass
+
+    # Look up crop images for PERSON nodes from DetectedEntityCrop
+    person_ids = [n["entity_id"] for n in nodes.values() if n["type"] == "PERSON" and n["entity_id"]]
+    if person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        try:
+            for row in query(
+                f"SELECT LinkedPersonID, CropImagePath FROM DetectedEntityCrop WHERE LinkedPersonID IN ({placeholders}) AND CropImagePath IS NOT NULL AND CropImagePath != ''",
+                person_ids,
+            ):
+                key = node_key("PERSON", row["LinkedPersonID"])
+                if key in nodes and "image" not in nodes[key]:
+                    nodes[key]["image"] = row["CropImagePath"]
+        except Exception:
+            pass
+
+    # Look up labels and preview images for photos from PhotoEvidence
+    photo_ids = [n["entity_id"] for n in nodes.values() if n["type"] == "PHOTO" and n["entity_id"]]
+    if photo_ids:
+        placeholders = ",".join("?" * len(photo_ids))
+        try:
+            for row in query(
+                f"SELECT PhotoID, FileName, AnnotatedPreviewUrl FROM PhotoEvidence WHERE PhotoID IN ({placeholders})",
+                photo_ids,
+            ):
+                key = node_key("PHOTO", row["PhotoID"])
+                if key in nodes:
+                    nodes[key]["label"] = f"Photo: {row['FileName']}"
+                    if row["AnnotatedPreviewUrl"]:
+                        nodes[key]["image"] = row["AnnotatedPreviewUrl"]
+        except Exception:
+            pass
+
+
     for n in nodes.values():
         if n["type"] == "LOCATION" and (n.get("label") == n["id"] or not n.get("label")):
             n["label"] = "Incident scene" if n["entity_id"] == 0 else n.get("label") or n["id"]
-        if n["type"] == "PHOTO" and not n.get("label"):
+        if n["type"] == "PHOTO" and (n.get("label") == n["id"] or not n.get("label")):
             n["label"] = f"Photo #{n['entity_id']}"
+        if n["type"] == "WEAPON" and (n.get("label") == n["id"] or not n.get("label")):
+            n["label"] = f"Weapon #{n['entity_id']}"
+        if n["type"] == "OBJECT" and (n.get("label") == n["id"] or not n.get("label")):
+            n["label"] = f"Object #{n['entity_id']}"
         if n["type"] == "EVIDENCE_GROUP" and not n.get("label"):
             n["label"] = f"Evidence #{n['entity_id']}"
+
 
 
 def fetch_case_edges(case_id: int) -> list[dict[str, Any]]:

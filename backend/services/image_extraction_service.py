@@ -18,28 +18,66 @@ from backend.db import ROOT, get_write_conn, query
 
 ANNOTATED_DIR = ROOT / "frontend" / "annotated"
 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
+CROPS_DIR = ROOT / "frontend" / "crops"
+CROPS_DIR.mkdir(parents=True, exist_ok=True)
 
 PERSON_EMBEDDING_COLUMN = "FaceEmbeddingJSON"
 
 
-def _ensure_face_embedding_column() -> None:
-    """Best-effort schema migration for Person.FaceEmbeddingJSON column."""
+def _ensure_tables() -> None:
+    """Ensure Person.FaceEmbeddingJSON column, PhotoEvidence, and DetectedEntityCrop tables exist."""
     try:
         conn = get_write_conn()
         try:
+            # 1. Person.FaceEmbeddingJSON
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(Person)").fetchall()]
             if PERSON_EMBEDDING_COLUMN.lower() not in [c.lower() for c in cols]:
                 conn.execute(
                     f"ALTER TABLE Person ADD COLUMN {PERSON_EMBEDDING_COLUMN} TEXT"
                 )
-                conn.commit()
+
+            # 2. PhotoEvidence
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS PhotoEvidence (
+                    PhotoID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    CaseMasterID INTEGER NOT NULL,
+                    FileName VARCHAR(255) NOT NULL,
+                    FilePath VARCHAR(255),
+                    AnnotatedPreviewUrl VARCHAR(255),
+                    ExifTimestamp DATETIME,
+                    ExifLatitude NUMERIC(10, 6),
+                    ExifLongitude NUMERIC(10, 6),
+                    UploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+            # 3. DetectedEntityCrop
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS DetectedEntityCrop (
+                    CropID VARCHAR(20) PRIMARY KEY,
+                    SourcePhotoID INTEGER NOT NULL,
+                    EntityType VARCHAR(20) NOT NULL,
+                    Label VARCHAR(50),
+                    Confidence NUMERIC(4,3),
+                    BBox VARCHAR(60),
+                    CropImagePath VARCHAR(200) NOT NULL,
+                    LinkedPersonID INTEGER,
+                    FOREIGN KEY (SourcePhotoID) REFERENCES PhotoEvidence(PhotoID)
+                )
+                """
+            )
+            conn.commit()
         finally:
             conn.close()
     except Exception:
         pass
 
 
-_ensure_face_embedding_column()
+_ensure_tables()
+
 
 
 # ---------- Object detection -----------------------------------------------------
@@ -557,85 +595,309 @@ def draw_annotated_preview(
     return f"/annotated/{name}"
 
 
+# ---------- Entity Cropping ------------------------------------------------------
+
+
+def crop_detections(
+    image_bytes_or_img: bytes | Any,
+    detections: list[dict],
+    output_dir: Path | str | None = None,
+) -> list[dict]:
+    """Crop each bounding box out of the original image with 10% padding and save as a standalone file."""
+    target_dir = Path(output_dir) if output_dir else CROPS_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return []
+
+    if isinstance(image_bytes_or_img, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(image_bytes_or_img)).convert("RGB")
+    else:
+        img = image_bytes_or_img
+
+    cropped = []
+    for det in detections:
+        bbox = det.get("bbox") or [0, 0, 0, 0]
+        x1, y1, x2, y2 = bbox
+        w, h = max(1, x2 - x1), max(1, y2 - y1)
+        pad_x, pad_y = int(w * 0.1), int(h * 0.1)
+        crop_box = (
+            max(0, int(x1 - pad_x)),
+            max(0, int(y1 - pad_y)),
+            min(img.width, int(x2 + pad_x)),
+            min(img.height, int(y2 + pad_y)),
+        )
+        crop_id = det.get("crop_id") or f"{uuid.uuid4().hex[:10]}"
+        filename = f"{crop_id}.jpg"
+        crop_path = target_dir / filename
+        sub = img.crop(crop_box)
+        sub.save(crop_path, format="JPEG", quality=90)
+        cropped.append(
+            {
+                **det,
+                "crop_id": crop_id,
+                "crop_image_url": f"/static/crops/{filename}",
+            }
+        )
+    return cropped
+
+
+def build_photo_detections(
+    image_bytes: bytes,
+    objects: list[dict],
+    low_confidence: list[dict] | None = None,
+    faces: list[dict] | None = None,
+) -> list[dict]:
+    """Combine objects (persons, weapons, other), low-confidence objects, and faces into a unified list of cropped detections."""
+    union_dets: list[dict] = []
+    used_face_indices: set[int] = set()
+
+    # 1. High confidence person detections from YOLO
+    for o in objects or []:
+        if o.get("label") == "person":
+            bbox = o.get("bbox") or [0, 0, 0, 0]
+            # Try to associate face inside person box
+            best_face = None
+            for fi, f in enumerate(faces or []):
+                if fi in used_face_indices:
+                    continue
+                fb = f.get("bbox") or [0, 0, 0, 0]
+                fc_x = (fb[0] + fb[2]) / 2
+                fc_y = (fb[1] + fb[3]) / 2
+                if bbox[0] <= fc_x <= bbox[2] and bbox[1] <= fc_y <= bbox[3]:
+                    best_face = f
+                    used_face_indices.add(fi)
+                    break
+
+            det = {
+                "entity_type": "PERSON",
+                "label": "person",
+                "confidence": o.get("confidence", 0.8),
+                "bbox": bbox,
+                "is_low_confidence": False,
+                "matched_person_id": best_face.get("matched_person_id") if best_face else None,
+                "matched_person_name": best_face.get("matched_person_name") if best_face else None,
+                "match_confidence": best_face.get("match_confidence") if best_face else None,
+                "status": best_face.get("status", "NEW_FACE_NO_MATCH") if best_face else "NEW_FACE_NO_MATCH",
+                "embedding": best_face.get("embedding") if best_face else None,
+                "face_bbox": best_face.get("bbox") if best_face else None,
+            }
+            union_dets.append(det)
+
+    # 2. Standalone faces not associated with a person bounding box
+    for fi, f in enumerate(faces or []):
+        if fi not in used_face_indices:
+            det = {
+                "entity_type": "PERSON",
+                "label": "person",
+                "confidence": f.get("match_confidence") or 0.85,
+                "bbox": f.get("bbox") or [0, 0, 0, 0],
+                "is_low_confidence": False,
+                "matched_person_id": f.get("matched_person_id"),
+                "matched_person_name": f.get("matched_person_name"),
+                "match_confidence": f.get("match_confidence"),
+                "status": f.get("status", "NEW_FACE_NO_MATCH"),
+                "embedding": f.get("embedding"),
+                "face_bbox": f.get("bbox"),
+            }
+            union_dets.append(det)
+
+    # 3. Weapons (both high and low confidence)
+    for o in objects or []:
+        lbl = o.get("label", "")
+        if lbl in WEAPON_CLASSES:
+            union_dets.append(
+                {
+                    "entity_type": "WEAPON",
+                    "label": lbl,
+                    "confidence": o.get("confidence", 0.5),
+                    "bbox": o.get("bbox") or [0, 0, 0, 0],
+                    "is_low_confidence": False,
+                }
+            )
+
+    for o in low_confidence or []:
+        lbl = o.get("label", "")
+        if lbl in WEAPON_CLASSES:
+            union_dets.append(
+                {
+                    "entity_type": "WEAPON",
+                    "label": lbl,
+                    "confidence": o.get("confidence", 0.2),
+                    "bbox": o.get("bbox") or [0, 0, 0, 0],
+                    "is_low_confidence": True,
+                    "note": o.get("note") or "below display threshold — review manually",
+                }
+            )
+
+    # 4. Other general objects (backpack, suitcase, bottle, etc.)
+    for o in objects or []:
+        lbl = o.get("label", "")
+        if lbl != "person" and lbl not in WEAPON_CLASSES:
+            union_dets.append(
+                {
+                    "entity_type": "OBJECT",
+                    "label": lbl,
+                    "confidence": o.get("confidence", 0.5),
+                    "bbox": o.get("bbox") or [0, 0, 0, 0],
+                    "is_low_confidence": False,
+                }
+            )
+
+    for o in low_confidence or []:
+        lbl = o.get("label", "")
+        if lbl != "person" and lbl not in WEAPON_CLASSES:
+            union_dets.append(
+                {
+                    "entity_type": "OBJECT",
+                    "label": lbl,
+                    "confidence": o.get("confidence", 0.2),
+                    "bbox": o.get("bbox") or [0, 0, 0, 0],
+                    "is_low_confidence": True,
+                    "note": o.get("note") or "below display threshold — review manually",
+                }
+            )
+
+    return crop_detections(image_bytes, union_dets)
+
+
+def save_photo_and_crops(
+    case_id: int,
+    filename: str,
+    preview_url: str,
+    location: dict | None,
+    crops: list[dict],
+) -> int:
+    """Save PhotoEvidence record and initial DetectedEntityCrop rows to DB."""
+    conn = get_write_conn()
+    try:
+        cur = conn.cursor()
+        loc_ts = (location or {}).get("timestamp")
+        loc_lat = (location or {}).get("latitude")
+        loc_lon = (location or {}).get("longitude")
+
+        cur.execute(
+            """
+            INSERT INTO PhotoEvidence (
+                CaseMasterID, FileName, FilePath, AnnotatedPreviewUrl,
+                ExifTimestamp, ExifLatitude, ExifLongitude
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (case_id, filename, preview_url, preview_url, loc_ts, loc_lat, loc_lon),
+        )
+        photo_id = int(cur.lastrowid)
+
+        for c in crops:
+            cid = c.get("crop_id")
+            etype = c.get("entity_type", "OBJECT")
+            lbl = c.get("label", "object")
+            conf = float(c.get("confidence") or 0.0)
+            bbox = c.get("bbox") or [0, 0, 0, 0]
+            bbox_str = ",".join(str(v) for v in bbox)
+            cpath = c.get("crop_image_url") or ""
+
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO DetectedEntityCrop (
+                    CropID, SourcePhotoID, EntityType, Label, Confidence, BBox, CropImagePath, LinkedPersonID
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (cid, photo_id, etype, lbl, conf, bbox_str, cpath),
+            )
+
+        conn.commit()
+        return photo_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ---------- Confirm (write to DB) ------------------------------------------------
 
 from backend.services.extraction_service import _insert_group, _match_or_create_person  # noqa: E402
 
 
-def confirm_image_extraction(
+def map_confirmed_crops(
     case_id: int,
-    confirmed_objects: list[dict],
-    confirmed_faces: list[dict],
-    confirmed_location: dict | None,
-    filename: str,
+    photo_id: int | None,
+    confirmed_crops: list[dict],
+    location_data: dict | None = None,
+    filename: str = "image",
 ) -> dict:
-    """Persist investigator-approved image evidence into GraphEdge + Person embeddings."""
+    """Map confirmed crops from a photo to each other and graph edges under one EvidenceIndependenceGroup."""
     conn = get_write_conn()
-    created_nodes = []
-    edges_added = 0
     try:
         cur = conn.cursor()
-        # 1. Group node to represent the photo itself
-        photo_gid = _insert_group(cur, case_id, f"Photo: {filename}")
-        photo_node_key = ("PHOTO", photo_gid)
-        created_nodes.append({"type": "PHOTO", "label": filename, "id": photo_gid})
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        exif_dt = confirmed_location.get("timestamp") if confirmed_location else None
-        exif_dt_parsed = exif_dt or now
+        exif_dt = (location_data or {}).get("timestamp") or now
 
-        # 2. Objects / weapons
-        obj_to_node = {}
-        for o in confirmed_objects or []:
-            lab = (o.get("label") or "OBJECT").upper()
-            if o.get("label") == "person":
-                continue  # persons handled under faces
-            gid = _insert_group(cur, case_id, f"{lab} (from {filename})")
-            key = (lab, gid)
-            obj_to_node[(o.get("label") or "").lower()] = key
-            created_nodes.append({"type": lab, "label": o.get("label"), "id": gid})
-            conf = float(o.get("confidence") or 0.5)
+        # If photo_id not provided or 0, create PhotoEvidence row
+        actual_photo_id = photo_id
+        if not actual_photo_id:
             cur.execute(
                 """
-                INSERT INTO GraphEdge (
-                    CaseMasterID, SourceEntityType, SourceEntityID,
-                    TargetEntityType, TargetEntityID, RelationType, EventDateTime,
-                    SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                INSERT INTO PhotoEvidence (CaseMasterID, FileName, FilePath, AnnotatedPreviewUrl, ExifTimestamp, ExifLatitude, ExifLongitude)
+                VALUES (?, ?, '', '', ?, ?, ?)
                 """,
                 (
                     case_id,
-                    "EVIDENCE_GROUP", photo_gid,
-                    "EVIDENCE_GROUP", gid,
-                    "DEPICTS_OBJECT", exif_dt_parsed,
-                    conf, photo_gid,
+                    filename,
+                    exif_dt,
+                    (location_data or {}).get("latitude"),
+                    (location_data or {}).get("longitude"),
                 ),
             )
-            edges_added += 1
+            actual_photo_id = int(cur.lastrowid)
 
-        # 3. Faces
-        face_person_ids = []
-        name_to_node: dict[tuple[str, str], tuple[str, int]] = {}
-        for f in confirmed_faces or []:
-            if not f.get("included", True):
-                continue
-            pid = f.get("matched_person_id")
-            create_new = f.get("force_create_new") or (pid is None)
-            name = (f.get("matched_person_name") or "").strip()
-            if create_new or not name:
-                # Create a new unresolved Person; name it "Unresolved Person #N" if needed
-                ordinal = len([n for n in created_nodes if n["type"] == "PERSON"]) + 1
-                fallback_name = f.get("provisional_name") or f"Unresolved Person {ordinal}"
-                pid = _match_or_create_person(cur, case_id, fallback_name)
-                created_nodes.append({"type": "PERSON", "label": fallback_name, "id": pid})
-            elif pid is not None:
-                # existing matched person — confirm selection (pid already set)
-                pass
-            face_person_ids.append(pid)
-            name_to_node[(f"person:{pid}".lower(), "PERSON")] = ("PERSON", pid)
+        # 1. Insert ONE EvidenceIndependenceGroup for this photo observation event
+        desc = f"Photo #{actual_photo_id} detections: {filename}"
+        cur.execute(
+            """
+            INSERT INTO EvidenceIndependenceGroup (CaseMasterID, EventDescription, EventDateTime)
+            VALUES (?, ?, ?)
+            """,
+            (case_id, desc, exif_dt),
+        )
+        group_id = int(cur.lastrowid)
 
-            # Store embedding if we have one
-            emb = f.get("embedding")
-            if pid is not None and emb:
+        # 2. Separate confirmed entities
+        person_entities = [c for c in confirmed_crops if c.get("entity_type") == "PERSON" and c.get("included", True)]
+        weapon_entities = [c for c in confirmed_crops if c.get("entity_type") == "WEAPON" and c.get("included", True)]
+        object_entities = [c for c in confirmed_crops if c.get("entity_type") == "OBJECT" and c.get("included", True)]
+
+        created_nodes = []
+        edges_added = 0
+
+        # Also create/ensure PHOTO node
+        photo_node_id = actual_photo_id
+        created_nodes.append({"type": "PHOTO", "label": f"Photo: {filename}", "id": photo_node_id})
+
+        # 3. Resolve each confirmed PERSON crop
+        for idx, p in enumerate(person_entities):
+            pid = p.get("linked_person_id") or p.get("matched_person_id")
+            force_new = p.get("force_create_new", False)
+            if force_new or not pid:
+                prov_name = (p.get("provisional_name") or "").strip()
+                name = prov_name or f"Person from {filename} (#{idx + 1})"
+                pid = _match_or_create_person(cur, case_id, name)
+                created_nodes.append({"type": "PERSON", "label": name, "id": pid})
+            p["linked_person_id"] = pid
+
+            # Update DetectedEntityCrop.LinkedPersonID
+            crop_id = p.get("crop_id")
+            if crop_id:
+                cur.execute(
+                    "UPDATE DetectedEntityCrop SET LinkedPersonID = ? WHERE CropID = ?",
+                    (pid, crop_id),
+                )
+
+            # Store face embedding if present
+            emb = p.get("embedding")
+            if pid and emb:
                 try:
                     cur.execute(
                         f"UPDATE Person SET {PERSON_EMBEDDING_COLUMN} = ? WHERE PersonID = ?",
@@ -644,55 +906,111 @@ def confirm_image_extraction(
                 except Exception:
                     pass
 
-            # DEPICTED_IN_PHOTO edge between person and photo group
-            conf = float(f.get("match_confidence") or 0.5)
+            # Link PERSON ↔ PHOTO (DEPICTED_IN_PHOTO)
+            conf = float(p.get("confidence") or p.get("match_confidence") or 0.8)
             cur.execute(
                 """
                 INSERT INTO GraphEdge (
                     CaseMasterID, SourceEntityType, SourceEntityID,
                     TargetEntityType, TargetEntityID, RelationType, EventDateTime,
                     SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                ) VALUES (?, 'PERSON', ?, 'PHOTO', ?, 'DEPICTED_IN_PHOTO', ?, 'IMAGE_UPLOAD', NULL, ?, ?)
                 """,
-                (
-                    case_id,
-                    "PERSON", pid,
-                    "EVIDENCE_GROUP", photo_gid,
-                    "DEPICTED_IN_PHOTO", exif_dt_parsed,
-                    conf, photo_gid,
-                ),
+                (case_id, pid, photo_node_id, exif_dt, conf, group_id),
             )
             edges_added += 1
 
-        # CO_APPEARS_IN_PHOTO between every pair of persons in the same photo
-        for i, a in enumerate(face_person_ids):
-            for b in face_person_ids[i + 1 :]:
+        # 4. PERSON ↔ PERSON (CO_APPEARS_IN_PHOTO)
+        for i in range(len(person_entities)):
+            for j in range(i + 1, len(person_entities)):
+                pid_a = person_entities[i]["linked_person_id"]
+                pid_b = person_entities[j]["linked_person_id"]
+                if pid_a != pid_b:
+                    cur.execute(
+                        """
+                        INSERT INTO GraphEdge (
+                            CaseMasterID, SourceEntityType, SourceEntityID,
+                            TargetEntityType, TargetEntityID, RelationType, EventDateTime,
+                            SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
+                        ) VALUES (?, 'PERSON', ?, 'PERSON', ?, 'CO_APPEARS_IN_PHOTO', ?, 'IMAGE_UPLOAD', NULL, 0.75, ?)
+                        """,
+                        (case_id, pid_a, pid_b, exif_dt, group_id),
+                    )
+                    edges_added += 1
+
+        # 5. WEAPONS
+        for w in weapon_entities:
+            w_cid = w["crop_id"]
+            w_label = w.get("label", "weapon")
+            w_conf = float(w.get("confidence") or 0.5)
+            created_nodes.append({"type": "WEAPON", "label": f"{w_label.capitalize()} ({round(w_conf*100)}%)", "id": w_cid})
+
+            # Link WEAPON ↔ PHOTO (DEPICTS_OBJECT)
+            cur.execute(
+                """
+                INSERT INTO GraphEdge (
+                    CaseMasterID, SourceEntityType, SourceEntityID,
+                    TargetEntityType, TargetEntityID, RelationType, EventDateTime,
+                    SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
+                ) VALUES (?, 'PHOTO', ?, 'WEAPON', ?, 'DEPICTS_OBJECT', ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                """,
+                (case_id, photo_node_id, w_cid, exif_dt, w_conf, group_id),
+            )
+            edges_added += 1
+
+            # Link PERSON ↔ WEAPON (NEAR_WEAPON_IN_PHOTO) for every confirmed person
+            for p in person_entities:
                 cur.execute(
                     """
                     INSERT INTO GraphEdge (
                         CaseMasterID, SourceEntityType, SourceEntityID,
                         TargetEntityType, TargetEntityID, RelationType, EventDateTime,
                         SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                    ) VALUES (?, 'PERSON', ?, 'WEAPON', ?, 'NEAR_WEAPON_IN_PHOTO', ?, 'IMAGE_UPLOAD', NULL, ?, ?)
                     """,
-                    (
-                        case_id,
-                        "PERSON", a,
-                        "PERSON", b,
-                        "CO_APPEARS_IN_PHOTO", exif_dt_parsed,
-                        0.75, photo_gid,
-                    ),
+                    (case_id, p["linked_person_id"], w_cid, exif_dt, w_conf, group_id),
                 )
                 edges_added += 1
 
-        # 4. EXIF location / timestamp
-        if confirmed_location and confirmed_location.get("included"):
-            parts = []
-            if confirmed_location.get("latitude") is not None:
-                parts.append(str(confirmed_location["latitude"]))
-            if confirmed_location.get("longitude") is not None:
-                parts.append(str(confirmed_location["longitude"]))
-            loc_label = f"Photo Location ({', '.join(parts) or 'from EXIF'})"
+        # 6. OTHER OBJECTS
+        for o in object_entities:
+            o_cid = o["crop_id"]
+            o_label = o.get("label", "object")
+            o_conf = float(o.get("confidence") or 0.5)
+            created_nodes.append({"type": "OBJECT", "label": f"{o_label.capitalize()} ({round(o_conf*100)}%)", "id": o_cid})
+
+            # Link OBJECT ↔ PHOTO (DEPICTS_OBJECT)
+            cur.execute(
+                """
+                INSERT INTO GraphEdge (
+                    CaseMasterID, SourceEntityType, SourceEntityID,
+                    TargetEntityType, TargetEntityID, RelationType, EventDateTime,
+                    SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
+                ) VALUES (?, 'PHOTO', ?, 'OBJECT', ?, 'DEPICTS_OBJECT', ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                """,
+                (case_id, photo_node_id, o_cid, exif_dt, o_conf, group_id),
+            )
+            edges_added += 1
+
+            # Link PERSON ↔ OBJECT (NEAR_OBJECT_IN_PHOTO)
+            for p in person_entities:
+                cur.execute(
+                    """
+                    INSERT INTO GraphEdge (
+                        CaseMasterID, SourceEntityType, SourceEntityID,
+                        TargetEntityType, TargetEntityID, RelationType, EventDateTime,
+                        SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
+                    ) VALUES (?, 'PERSON', ?, 'OBJECT', ?, 'NEAR_OBJECT_IN_PHOTO', ?, 'IMAGE_UPLOAD', NULL, ?, ?)
+                    """,
+                    (case_id, p["linked_person_id"], o_cid, exif_dt, o_conf, group_id),
+                )
+                edges_added += 1
+
+        # 7. EXIF Location
+        if location_data and location_data.get("included") and location_data.get("latitude") is not None:
+            lat = location_data["latitude"]
+            lon = location_data.get("longitude")
+            loc_label = f"Location ({lat}, {lon})"
             loc_gid = _insert_group(cur, case_id, loc_label)
             created_nodes.append({"type": "LOCATION", "label": loc_label, "id": loc_gid})
             cur.execute(
@@ -701,22 +1019,78 @@ def confirm_image_extraction(
                     CaseMasterID, SourceEntityType, SourceEntityID,
                     TargetEntityType, TargetEntityID, RelationType, EventDateTime,
                     SourceType, SourceRecordID, ConfidenceScore, IndependenceGroupID
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'EXIF', NULL, ?, ?)
+                ) VALUES (?, 'PHOTO', ?, 'LOCATION', ?, 'PHOTOGRAPHED_AT', ?, 'EXIF', NULL, 0.9, ?)
                 """,
-                (
-                    case_id,
-                    "EVIDENCE_GROUP", photo_gid,
-                    "EVIDENCE_GROUP", loc_gid,
-                    "PHOTOGRAPHED_AT", exif_dt_parsed,
-                    0.9, photo_gid,
-                ),
+                (case_id, photo_node_id, loc_gid, exif_dt, group_id),
             )
             edges_added += 1
 
         conn.commit()
-        return {"created": created_nodes, "edges_added": edges_added}
+        return {
+            "created": created_nodes,
+            "edges_added": edges_added,
+            "independence_group_id": group_id,
+            "photo_id": actual_photo_id,
+        }
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+def confirm_image_extraction(
+    case_id: int,
+    confirmed_objects: list[dict],
+    confirmed_faces: list[dict],
+    confirmed_location: dict | None,
+    filename: str,
+    photo_id: int | None = None,
+    confirmed_crops: list[dict] | None = None,
+) -> dict:
+    """Persist investigator-approved image evidence into GraphEdge + Person embeddings."""
+    if confirmed_crops:
+        return map_confirmed_crops(
+            case_id=case_id,
+            photo_id=photo_id,
+            confirmed_crops=confirmed_crops,
+            location_data=confirmed_location,
+            filename=filename,
+        )
+    # Adapt legacy objects & faces to crops if confirmed_crops not provided
+    synthetic_crops = []
+    for f in confirmed_faces or []:
+        synthetic_crops.append(
+            {
+                "crop_id": f.get("crop_id") or uuid.uuid4().hex[:10],
+                "entity_type": "PERSON",
+                "label": "person",
+                "confidence": f.get("match_confidence") or 0.8,
+                "included": f.get("included", True),
+                "matched_person_id": f.get("matched_person_id"),
+                "matched_person_name": f.get("matched_person_name"),
+                "force_create_new": f.get("force_create_new", False),
+                "provisional_name": f.get("provisional_name"),
+                "embedding": f.get("embedding"),
+            }
+        )
+    for o in confirmed_objects or []:
+        lbl = o.get("label", "object")
+        etype = "WEAPON" if lbl in WEAPON_CLASSES else "OBJECT"
+        synthetic_crops.append(
+            {
+                "crop_id": o.get("crop_id") or uuid.uuid4().hex[:10],
+                "entity_type": etype,
+                "label": lbl,
+                "confidence": o.get("confidence", 0.5),
+                "included": o.get("included", True),
+            }
+        )
+    return map_confirmed_crops(
+        case_id=case_id,
+        photo_id=photo_id,
+        confirmed_crops=synthetic_crops,
+        location_data=confirmed_location,
+        filename=filename,
+    )
+

@@ -44,10 +44,14 @@ def query_one(sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def node_key(entity_type: str, entity_id: int) -> str:
+def node_key(entity_type: str, entity_id: Any) -> str:
     return f"{entity_type}:{entity_id}"
 
 
-def parse_node_key(key: str) -> tuple[str, int]:
+def parse_node_key(key: str) -> tuple[str, Any]:
     kind, _, rest = key.partition(":")
-    return kind, int(rest)
+    try:
+        return kind, int(rest)
+    except ValueError:
+        return kind, rest
+

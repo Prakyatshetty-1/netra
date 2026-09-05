@@ -1,5 +1,15 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
+import { BASE } from "../api";
+
+function resolveUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:")) {
+    return url;
+  }
+  return `${BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
 
 export const EDGE_KIND_META = {
   pp:    { color: "#ff6b00", label: "Person ↔ Person (NAMED_TOGETHER, CO_ACCUSED, CO_APPEARS_IN_PHOTO)" },
@@ -21,16 +31,21 @@ function classifyEdge(edge, nodeTypeOf) {
 
   if (
     types.has("PHOTO") ||
+    types.has("WEAPON") ||
+    types.has("OBJECT") ||
     types.has("EVIDENCE_GROUP") ||
     src === "IMAGE_UPLOAD" ||
     src === "EXIF" ||
     rel === "DEPICTED_IN_PHOTO" ||
     rel === "DEPICTS_OBJECT" ||
     rel === "CO_APPEARS_IN_PHOTO" ||
+    rel === "NEAR_WEAPON_IN_PHOTO" ||
+    rel === "NEAR_OBJECT_IN_PHOTO" ||
     rel === "PHOTOGRAPHED_AT"
   ) {
     return "photo";
   }
+
   if (types.has("PHONE") || rel === "HAS_PHONE" || rel === "CALLED" || rel === "SMS" || rel === "OTP" || rel === "TOWER_LOG") {
     return "phone";
   }
@@ -113,18 +128,26 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
     const elements = [];
     for (const n of nodes) {
       const label = n.label || n.id;
+      const imageUrl = n.image ? resolveUrl(n.image) : "";
+      const hasImage = Boolean(imageUrl);
+
+      const width = hasImage ? 84 : Math.min(220, Math.max(96, 18 + label.length * 7.2));
+      const height = hasImage ? 84 : 28 + Math.round(22 * (n.centrality || 0));
+
       elements.push({
         data: {
           id: n.id,
           label,
           type: n.type,
           centrality: n.centrality || 0,
-          cardWidth: Math.min(220, Math.max(96, 18 + label.length * 7.2)),
-          cardHeight: 28 + Math.round(22 * (n.centrality || 0)),
+          cardWidth: width,
+          cardHeight: height,
+          nodeImage: imageUrl,
         },
-        classes: n.highlighted ? "hl" : "",
+        classes: [n.highlighted ? "hl" : "", hasImage ? "has-img" : ""].filter(Boolean).join(" "),
       });
     }
+
     for (const e of collapsed) {
       const srcType = e.source_type || "";
       const dashed =
@@ -196,7 +219,87 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
           },
         },
         {
+          selector: "node[type = 'WEAPON']",
+          style: {
+            "border-color": "#ff5050",
+            "background-color": "#281212",
+          },
+        },
+        {
+          selector: "node[type = 'PHOTO']",
+          style: {
+            "border-color": "#ffa3e6",
+            "background-color": "#281224",
+          },
+        },
+        {
+          selector: "node[type = 'OBJECT']",
+          style: {
+            "border-color": "#5b8def",
+            "background-color": "#121b28",
+          },
+        },
+        {
+          selector: "node.has-img",
+          style: {
+            "background-image": "data(nodeImage)",
+            "background-fit": "cover",
+            "background-clip": "node",
+            "background-color": "#141414",
+            "border-width": 2.5,
+            "border-color": "#ffb77a",
+            "text-valign": "bottom",
+            "text-halign": "center",
+            "text-margin-y": 8,
+            "font-size": 11,
+            "font-weight": 700,
+            "text-outline-color": "#0a0a0a",
+            "text-outline-width": 2.5,
+            "text-outline-opacity": 0.95,
+            "text-max-width": 140,
+            "width": "data(cardWidth)",
+            "height": "data(cardHeight)",
+          },
+        },
+        {
+          selector: "node[type = 'WEAPON'].has-img",
+          style: {
+            "border-color": "#ff5050",
+            "border-width": 3,
+          },
+        },
+        {
+          selector: "node[type = 'PHOTO'].has-img",
+          style: {
+            "border-color": "#ffa3e6",
+            "border-width": 3,
+          },
+        },
+        {
+          selector: "node[type = 'PERSON'].has-img",
+          style: {
+            "border-color": "#ff6b00",
+            "border-width": 3,
+          },
+        },
+        {
+          selector: "node[type = 'OBJECT'].has-img",
+          style: {
+            "border-color": "#5b8def",
+            "border-width": 3,
+          },
+        },
+        {
+          selector: "node.hl.has-img",
+          style: {
+            "border-width": 4.5,
+            "border-color": "#ff3d3d",
+          },
+        },
+
+        {
           selector: "edge",
+
           style: {
             width: 1.8,
             "line-color": EDGE_KIND_META.other.color,

@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+export const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 export function apiError(err) {
   const detail = err?.response?.data?.detail;
@@ -10,6 +10,9 @@ export function apiError(err) {
 }
 
 export const getCases = () => axios.get(`${BASE}/cases`).then((r) => r.data);
+
+export const getCase = (caseId) => axios.get(`${BASE}/cases/${caseId}`).then((r) => r.data);
+
 
 export const getCaseGraph = (caseId) =>
   axios.get(`${BASE}/cases/${caseId}/graph`).then((r) => r.data);

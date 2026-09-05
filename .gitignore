@@ -2,11 +2,16 @@
 *.pt
 
 # Annotated image artifacts
-annotated/
 frontend/annotated/
+annotated/
+
+# Crop image artifacts
+frontend/crops/
+crops/
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so

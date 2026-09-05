@@ -24,6 +24,8 @@ from backend.routers import (
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 ANNOTATED_DIR = FRONTEND / "annotated"
 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
+CROPS_DIR = FRONTEND / "crops"
+CROPS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="NETRA Prototype",
@@ -52,9 +54,12 @@ app.include_router(extraction.router)
 app.include_router(image_upload.router)
 
 app.mount("/annotated", StaticFiles(directory=ANNOTATED_DIR), name="annotated")
+app.mount("/static/crops", StaticFiles(directory=CROPS_DIR), name="static_crops")
+app.mount("/crops", StaticFiles(directory=CROPS_DIR), name="crops")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
 @app.get("/")
 def index():
     return FileResponse(FRONTEND / "index.html")
+
