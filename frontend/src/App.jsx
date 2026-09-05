@@ -168,7 +168,7 @@ export default function App() {
         )}
         {page === "upload" && (
           <div className="page-view">
-            <h1 className="page-title">Upload Document</h1>
+            <h1 className="page-title">Evidence & CCTV Video Ingestion</h1>
             <UploadPanel caseId={selectedCaseId} onConfirmed={handleExtractConfirmed} />
           </div>
         )}

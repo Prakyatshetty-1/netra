@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { apiError, confirmExtraction, createCase, uploadOcrDocument, uploadPdf, verifyOcrLines } from "../api";
+import { apiError, confirmExtraction, createCase, uploadCctvVideo, uploadOcrDocument, uploadPdf, verifyOcrLines } from "../api";
 import GraphCanvas from "./GraphCanvas";
 
 const REL_TYPES = [
@@ -9,6 +9,13 @@ const REL_TYPES = [
   "MENTIONED_AT_LOCATION",
   "MENTIONED_ON_DATE",
 ];
+
+function toFullUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+  const base = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 function draftToGraph(entities, relations, filename) {
   const labelType = (lab) => {
@@ -79,17 +86,58 @@ export default function UploadPanel({ caseId, onConfirmed }) {
   const [reviewerName, setReviewerName] = useState("investigator-1");
   const [docViewMode, setDocViewMode] = useState("original"); // "original" or "overlay"
   const [showDebug, setShowDebug] = useState(false);
+  const [useGemini, setUseGemini] = useState(true);
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("gemini_api_key") || "");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+
+  const handleKeyChange = (val) => {
+    setGeminiKey(val);
+    localStorage.setItem("gemini_api_key", val);
+  };
 
   const previewGraph = useMemo(
     () => draftToGraph(entities.filter(e => e.included), relations.filter(r => r.included), draft?.filename || ocrDoc?.filename),
     [entities, relations, draft, ocrDoc]
   );
 
+  const [cctvResult, setCctvResult] = useState(null);
+  const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
+  const [sampleRateSec, setSampleRateSec] = useState(1.0);
+  const [confThreshold, setConfThreshold] = useState(0.50);
+
   const isImageFile = useMemo(() => {
     if (!file?.name) return false;
     const n = file.name.toLowerCase();
     return n.endsWith(".png") || n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".webp") || n.endsWith(".bmp") || n.endsWith(".tiff");
   }, [file]);
+
+  const isVideoFile = useMemo(() => {
+    if (!file?.name) return false;
+    const n = file.name.toLowerCase();
+    return n.endsWith(".mp4") || n.endsWith(".avi") || n.endsWith(".mov") || n.endsWith(".mkv") || n.endsWith(".webm");
+  }, [file]);
+
+  async function handleCctvExtract() {
+    if (!file || caseId == null) return;
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    setDraft(null);
+    setOcrDoc(null);
+    setCctvResult(null);
+    try {
+      setInfo("Uploading CCTV video & extracting frames with YOLO object detection…");
+      const data = await uploadCctvVideo(caseId, file, sampleRateSec, confThreshold);
+      setCctvResult(data);
+      setSelectedFrameIdx(0);
+      setInfo(`CCTV Object Detection complete (${data.device}). ${data.total_detections} objects detected across ${data.frames?.length || 0} sampled frames.`);
+    } catch (e) {
+      console.error(e);
+      setErr(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleDigitalExtract() {
     if (!file || caseId == null) return;
@@ -105,7 +153,7 @@ export default function UploadPanel({ caseId, onConfirmed }) {
       setRelations((data.relations || []).map((r, i) => ({ ...r, included: true, _id: i })));
       setShowPreview(true);
       if (data.ocr_required) {
-        setInfo("Scanned document detected — no digital text found. Recommended: Run TrOCR Handwritten OCR below.");
+        setInfo("Scanned document detected — no digital text found. Recommended: Run Gemini Vision OCR below.");
       }
     } catch (e) {
       console.error(e);
@@ -115,7 +163,7 @@ export default function UploadPanel({ caseId, onConfirmed }) {
     }
   }
 
-  async function handleTrOCRExtract() {
+  async function handleOcrExtract() {
     if (!file || caseId == null) return;
     setBusy(true);
     setErr(null);
@@ -123,15 +171,16 @@ export default function UploadPanel({ caseId, onConfirmed }) {
     setDraft(null);
     setOcrVerified(false);
     try {
-      setInfo("Running Microsoft TrOCR handwritten line segmentation & inference…");
-      const data = await uploadOcrDocument(caseId, file);
+      setInfo("Running Google Gemini Vision AI text & entity extraction…");
+      const data = await uploadOcrDocument(caseId, file, true, geminiKey);
       setOcrDoc(data);
       setOcrLines(data.lines || []);
       setSelectedPageIdx(0);
       setEntities((data.entities || []).map((e, i) => ({ ...e, included: true, _id: i })));
       setRelations((data.relations || []).map((r, i) => ({ ...r, included: true, _id: i })));
       setShowPreview(true);
-      setInfo(`TrOCR complete (${data.summary?.device || "cpu"}). ${data.lines?.length || 0} text lines detected.`);
+      const engineName = data.summary?.ocr_engine || "Gemini Vision AI";
+      setInfo(`${engineName} complete! ${data.lines?.length || 0} text lines and ${data.entities?.length || 0} entities extracted.`);
     } catch (e) {
       console.error(e);
       setErr(apiError(e));
@@ -193,8 +242,9 @@ export default function UploadPanel({ caseId, onConfirmed }) {
       let targetCaseId = caseId;
       if (createNew) {
         const sourceName = ocrDoc?.filename || draft?.filename || "Uploaded Document";
+        const engineTag = ocrDoc?.summary?.ocr_engine || "Document Extract";
         const newCase = await createCase({
-          brief_facts: `Extracted from ${sourceName} via ${ocrDoc ? "Microsoft TrOCR" : "PDF extract"}.`,
+          brief_facts: `Extracted from ${sourceName} via ${engineTag}.`,
         });
         targetCaseId = newCase.case_id;
         setInfo(`Created new case #${targetCaseId} for this document…`);
@@ -236,26 +286,27 @@ export default function UploadPanel({ caseId, onConfirmed }) {
     <article className="panel-card upload" id="uploadCard">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2>
-          Upload Document <span className="badge-new">INGEST</span>
+          Evidence & CCTV Video Ingestion <span className="badge-new">INGEST</span>
         </h2>
         <span className="muted" style={{ fontSize: 12 }}>
-          Microsoft TrOCR Base Handwritten Model Supported
+          YOLOv8 CCTV Detection & Gemini AI Supported
         </span>
       </div>
       <p className="muted" style={{ marginTop: 2, marginBottom: 12 }}>
-        Ingest typed or handwritten evidence (FIRs, field notes, statements). Handwritten documents run through Microsoft TrOCR with line detection and confidence tiers.
+        Upload CCTV video clips (MP4, AVI, MOV, MKV) for <strong>YOLO object detection</strong> (people, vehicles), or upload typed/handwritten documents (PDF, images) for <strong>Gemini Vision AI OCR</strong>.
       </p>
 
       {/* File Selection */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input
           type="file"
-          accept="application/pdf,image/*"
+          accept="application/pdf,image/*,video/*,.mp4,.avi,.mov,.mkv,.webm"
           onChange={(e) => {
             const f = e.target.files?.[0] || null;
             setFile(f);
             setDraft(null);
             setOcrDoc(null);
+            setCctvResult(null);
             setOcrLines([]);
             setErr(null);
             setInfo(null);
@@ -263,25 +314,59 @@ export default function UploadPanel({ caseId, onConfirmed }) {
         />
         {file && (
           <span className="muted" style={{ fontSize: 13 }}>
-            Selected: <strong>{file.name}</strong> ({(file.size / 1024).toFixed(1)} KB)
+            Selected: <strong>{file.name}</strong> ({(file.size / 1024 / 1024).toFixed(2)} MB)
           </span>
+        )}
+      </div>
+
+      {/* Gemini API Key Toggle Input */}
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="btn"
+          style={{ padding: "3px 8px", fontSize: 12, background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255,255,255,0.15)" }}
+          onClick={() => setShowKeyInput(p => !p)}
+        >
+          🔑 {showKeyInput ? "Hide Gemini Key" : "Gemini API Key Settings"}
+        </button>
+        {showKeyInput && (
+          <input
+            type="password"
+            placeholder="Paste GEMINI_API_KEY (optional if set in server .env)"
+            value={geminiKey}
+            onChange={(e) => handleKeyChange(e.target.value)}
+            style={{ padding: "4px 8px", fontSize: 12, width: 280, borderRadius: 4, background: "#132338", color: "#fff", border: "1px solid #334e68" }}
+          />
         )}
       </div>
 
       {/* Action Buttons */}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button
-          className="btn amber"
-          type="button"
-          disabled={!file || busy}
-          onClick={handleTrOCRExtract}
-          title="Run Microsoft TrOCR on handwritten text lines"
-          style={{ display: "flex", alignItems: "center", gap: 6 }}
-        >
-          <span>✍️</span> {busy && ocrDoc == null && !draft ? "Running TrOCR…" : "Transcribe Handwritten (TrOCR)"}
-        </button>
+        {isVideoFile ? (
+          <button
+            className="btn amber"
+            type="button"
+            disabled={!file || busy}
+            onClick={handleCctvExtract}
+            title="Run OpenCV Frame Extractor & Ultralytics YOLO Object Detection"
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "linear-gradient(135deg, #00d2ff 0%, #0072ff 100%)", color: "#fff" }}
+          >
+            <span>📹</span> {busy && cctvResult == null ? "Running YOLO Detection…" : "Detect CCTV Objects (YOLO)"}
+          </button>
+        ) : (
+          <button
+            className="btn amber"
+            type="button"
+            disabled={!file || busy}
+            onClick={() => handleOcrExtract()}
+            title="Extract text and entities using Google Gemini Vision AI"
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "linear-gradient(135deg, #e8952e 0%, #ff6b4a 100%)", color: "#fff" }}
+          >
+            <span>✨</span> {busy && ocrDoc == null && !draft ? "Running Gemini Vision AI…" : "Gemini Vision OCR"}
+          </button>
+        )}
 
-        {!isImageFile && (
+        {!isImageFile && !isVideoFile && (
           <button
             className="btn"
             type="button"
@@ -293,7 +378,7 @@ export default function UploadPanel({ caseId, onConfirmed }) {
           </button>
         )}
 
-        {(draft || ocrDoc) && (
+        {(draft || ocrDoc || cctvResult) && (
           <label style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 13 }} className="muted">
             <input
               type="checkbox"
@@ -309,6 +394,144 @@ export default function UploadPanel({ caseId, onConfirmed }) {
 
       {err && <div className="error-inline" style={{ marginTop: 10 }}>{err}</div>}
       {info && <div className="info-inline" style={{ marginTop: 10, color: "#ffa366" }}>{info}</div>}
+
+      {/* CCTV Video Analysis View */}
+      {cctvResult && (
+        <section className="cctv-analysis-section" style={{ marginTop: 16, background: "#0a1320", border: "1px solid #1c2e47", borderRadius: 8, padding: 14 }}>
+          {/* Video Metadata Banner */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, borderBottom: "1px solid #1c2e47", paddingBottom: 10 }}>
+            <div>
+              <h3 style={{ color: "#00d2ff", margin: 0, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>📹</span> {cctvResult.filename}
+              </h3>
+              <span className="muted" style={{ fontSize: 11, fontFamily: "monospace" }}>
+                SHA-256: {cctvResult.file_hash_sha256}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span className="badge" style={{ background: "#132338", color: "#00d2ff", border: "1px solid #0072ff" }}>
+                Duration: {cctvResult.duration_formatted}
+              </span>
+              <span className="badge" style={{ background: "#132338", color: "#00d2ff", border: "1px solid #0072ff" }}>
+                Resolution: {cctvResult.resolution}
+              </span>
+              <span className="badge" style={{ background: "#132338", color: "#00d2ff", border: "1px solid #0072ff" }}>
+                FPS: {cctvResult.fps}
+              </span>
+              <span className="badge" style={{ background: "#132338", color: "#00d2ff", border: "1px solid #0072ff" }}>
+                Frames: {cctvResult.total_frames}
+              </span>
+              <span className="badge" style={{ background: "rgba(0,210,255,0.15)", color: "#00d2ff", border: "1px solid #00d2ff" }}>
+                Device: {cctvResult.device.toUpperCase()}
+              </span>
+            </div>
+          </div>
+
+          {/* Detections Summary Chips */}
+          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="muted" style={{ fontSize: 12 }}>Detected Objects:</span>
+            {Object.entries(cctvResult.summary_counts || {}).map(([cls, count]) => (
+              <span key={cls} className="badge-chip" style={{ background: cls === "person" ? "rgba(0, 210, 255, 0.2)" : "rgba(255, 149, 0, 0.2)", color: cls === "person" ? "#00d2ff" : "#ff9500", border: `1px solid ${cls === "person" ? "#00d2ff" : "#ff9500"}` }}>
+                {cls.toUpperCase()}: {count}
+              </span>
+            ))}
+            <span className="muted" style={{ marginLeft: "auto", fontSize: 12 }}>
+              Total Detections: <strong>{cctvResult.total_detections}</strong>
+            </span>
+          </div>
+
+          {/* Interactive Frame Detection Viewer & Overlay */}
+          {cctvResult.frames && cctvResult.frames.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, marginTop: 14 }}>
+              {/* Frame Image Overlay */}
+              <div style={{ background: "#050a12", border: "1px solid #1c2e47", borderRadius: 6, padding: 8, textAlign: "center" }}>
+                <img
+                  src={toFullUrl(cctvResult.frames[selectedFrameIdx]?.overlay_url)}
+                  alt={`Frame ${cctvResult.frames[selectedFrameIdx]?.frame_number}`}
+                  style={{ maxWidth: "100%", maxHeight: 420, borderRadius: 4, objectFit: "contain" }}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, padding: "0 6px" }}>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Frame #{cctvResult.frames[selectedFrameIdx]?.frame_number}
+                  </span>
+                  <span style={{ color: "#00d2ff", fontWeight: "bold", fontSize: 13 }}>
+                    Timestamp: {cctvResult.frames[selectedFrameIdx]?.timestamp}
+                  </span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Detections: {cctvResult.frames[selectedFrameIdx]?.detections?.length || 0}
+                  </span>
+                </div>
+              </div>
+
+              {/* Detections List for Selected Frame */}
+              <div style={{ background: "#050a12", border: "1px solid #1c2e47", borderRadius: 6, padding: 10 }}>
+                <h4 style={{ color: "#e8952e", margin: "0 0 8px 0", fontSize: 13 }}>
+                  Frame Detections ({cctvResult.frames[selectedFrameIdx]?.timestamp})
+                </h4>
+                {(!cctvResult.frames[selectedFrameIdx]?.detections || cctvResult.frames[selectedFrameIdx].detections.length === 0) ? (
+                  <p className="muted" style={{ fontSize: 12 }}>No objects detected in this frame above confidence threshold (≥0.50).</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+                    {cctvResult.frames[selectedFrameIdx].detections.map((det, dIdx) => (
+                      <div key={dIdx} style={{ background: "#101b2b", border: "1px solid #233b5c", borderRadius: 4, padding: "6px 8px", fontSize: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold", color: det.class === "person" ? "#00d2ff" : "#ff9500" }}>
+                          <span>{det.class.toUpperCase()}</span>
+                          <span>Confidence: {(det.confidence * 100).toFixed(0)}%</span>
+                        </div>
+                        <div className="muted" style={{ fontSize: 11, marginTop: 2, fontFamily: "monospace" }}>
+                          BBox: [{det.bbox.join(", ")}]
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Interactive Video Timeline Bar */}
+          {cctvResult.frames && cctvResult.frames.length > 0 && (
+            <div style={{ marginTop: 16, background: "#050a12", border: "1px solid #1c2e47", borderRadius: 6, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
+                <span style={{ color: "#00d2ff", fontWeight: "bold" }}>Video Timeline Markers</span>
+                <span className="muted">Click any frame marker to view bounding boxes</span>
+              </div>
+
+              {/* Timeline Track */}
+              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 6 }}>
+                {cctvResult.frames.map((f, idx) => {
+                  const hasObjects = f.detections && f.detections.length > 0;
+                  const isSelected = idx === selectedFrameIdx;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setSelectedFrameIdx(idx)}
+                      style={{
+                        padding: "6px 8px",
+                        fontSize: 11,
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        border: isSelected ? "2px solid #00d2ff" : "1px solid #233b5c",
+                        background: isSelected ? "#0072ff" : hasObjects ? "rgba(0, 210, 255, 0.15)" : "#101b2b",
+                        color: isSelected ? "#fff" : hasObjects ? "#00d2ff" : "#666",
+                        minWidth: 70,
+                        textAlign: "center",
+                      }}
+                      title={`Timestamp: ${f.timestamp} — ${f.detections?.length || 0} objects`}
+                    >
+                      <div>{f.timestamp}</div>
+                      <div style={{ fontSize: 10, marginTop: 2 }}>
+                        {hasObjects ? `● ${f.detections.length}` : "—"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Handwritten OCR Review View: Side-by-Side */}
       {ocrDoc && (
@@ -389,6 +612,33 @@ export default function UploadPanel({ caseId, onConfirmed }) {
                 {showDebug ? "Hide Debug" : "🔍 Debug Info"}
               </button>
             </div>
+          </div>
+
+          {/* Reconstructed TrOCR Text Transcript Box (BEFORE NER processing) */}
+          <div style={{ marginTop: 12, marginBottom: 12, background: "#101b2b", border: "1px solid #233b5c", borderRadius: 8, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <strong style={{ color: "#e8952e", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>📄</span> Reconstructed OCR Transcript (In Reading Order — Before NER)
+              </strong>
+              <span className="muted" style={{ fontSize: 11 }}>
+                {ocrDoc.raw_text ? `${ocrDoc.raw_text.split('\n').length} Lines Transcribed` : "No Text Transcribed"}
+              </span>
+            </div>
+            <pre style={{
+              background: "#0a1320",
+              color: "#d0e1f9",
+              padding: 10,
+              borderRadius: 6,
+              fontSize: 12,
+              lineHeight: 1.5,
+              maxHeight: 180,
+              overflowY: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              border: "1px solid #1c2e47"
+            }}>
+              {ocrDoc.raw_text || "(No transcript text available)"}
+            </pre>
           </div>
 
           {/* Collapsible Debug Panel */}
@@ -512,13 +762,13 @@ export default function UploadPanel({ caseId, onConfirmed }) {
               }}>
                 {docViewMode === "overlay" && ocrDoc.overlay_urls?.[selectedPageIdx] ? (
                   <img
-                    src={ocrDoc.overlay_urls[selectedPageIdx]}
+                    src={toFullUrl(ocrDoc.overlay_urls[selectedPageIdx])}
                     alt="Document page with line segmentation bounding boxes"
                     style={{ maxWidth: "100%", height: "auto", objectFit: "contain", borderRadius: 4 }}
                   />
                 ) : ocrDoc.page_urls?.[selectedPageIdx] ? (
                   <img
-                    src={ocrDoc.page_urls[selectedPageIdx]}
+                    src={toFullUrl(ocrDoc.page_urls[selectedPageIdx])}
                     alt="Original document page"
                     style={{ maxWidth: "100%", height: "auto", objectFit: "contain", borderRadius: 4 }}
                   />

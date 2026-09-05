@@ -1,4 +1,5 @@
-from fastapi import APIRouter, File, HTTPException, UploadFile
+import os
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.routers.graph import _public
@@ -8,6 +9,7 @@ from backend.services.extraction_service import (
     extract_relations,
     extract_text,
     get_document_ocr,
+    process_document_with_gemini,
     process_handwritten_document,
     update_document_ocr_lines,
 )
@@ -74,8 +76,14 @@ async def upload_pdf(case_id: int, file: UploadFile = File(...)):
 
 
 @router.post("/cases/{case_id}/ocr/upload")
-async def upload_ocr_document(case_id: int, file: UploadFile = File(...)):
-    """Upload document/image, preserve original, run TrOCR with line detection and confidence scoring."""
+async def upload_ocr_document(
+    case_id: int,
+    file: UploadFile = File(...),
+    use_gemini: bool = Form(True),
+    api_key: str | None = Form(None),
+    x_gemini_key: str | None = Header(None, alias="X-Gemini-API-Key"),
+):
+    """Upload document/image, preserve original, run Gemini Vision AI or TrOCR line detection."""
     if not file.filename:
         raise HTTPException(400, "Filename missing")
     allowed_exts = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"}
@@ -84,9 +92,20 @@ async def upload_ocr_document(case_id: int, file: UploadFile = File(...)):
         raise HTTPException(400, f"Unsupported file type. Allowed: {', '.join(allowed_exts)}")
 
     raw = await file.read()
+    key = api_key or x_gemini_key
     try:
+        if use_gemini or key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+            try:
+                result = process_document_with_gemini(case_id, file.filename, raw, api_key=key)
+                return result
+            except ValueError as val_err:
+                if use_gemini or key:
+                    raise HTTPException(400, str(val_err))
+            except Exception as gemini_err:
+                if use_gemini or key:
+                    raise HTTPException(500, f"Gemini Vision OCR failed: {str(gemini_err)}")
+
         result = process_handwritten_document(case_id, file.filename, raw)
-        # Extract initial entities and relations from recognized text as preliminary draft
         if result["raw_text"]:
             entities = extract_entities(result["raw_text"])
             relations = extract_relations(entities, result["raw_text"])
@@ -96,6 +115,8 @@ async def upload_ocr_document(case_id: int, file: UploadFile = File(...)):
             result["entities"] = []
             result["relations"] = []
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"OCR processing failed: {str(e)}")
 

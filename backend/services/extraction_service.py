@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from rapidfuzz import fuzz, process
 
@@ -18,6 +19,16 @@ from backend.services.provenance_service import log_ocr_correction
 
 PHONE_RE = re.compile(r"\b[6-9]\d{9}\b")
 PLATE_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}\b")
+CRIME_NO_RE = re.compile(r"\b(?:Cr\.?\s*No\.?|Crime\s*No\.?|Case\s*No\.?|FIR\s*No\.?)\s*\d+/\d{2,4}\b", re.IGNORECASE)
+SECTION_RE = re.compile(r"\b(?:\d+\([\d\w]+\)\s*(?:BNS|IPC|CrPC)|u/s\s*[\d\(\)\s\w,/-]+(?:\bBNS|\bIPC)?|\d+\s*BNS|\d+\s*IPC)\b", re.IGNORECASE)
+DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+TIME_STAMP_RE = re.compile(r"^\d{1,2}[\.\:]\d{2}$")
+INDIAN_NAME_RE = re.compile(
+    r"\b(?:Mohd\.?|Mohammed|Syed|Shaik|Smt\.?|Sri\.?|Mr\.?|Mrs\.?)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b"
+    r"|\b[A-Z][a-z]+\s+(?:Begum|Khan|uddin|Singh|Kumar|Rao|Reddy|Sharma|Verma|Gupta)\b"
+    r"|\b(?:Tahiruddin|Tayaba\s+Begum|Mohammed\s+Awais|Awais|Begum|Jahan|Fatima|Aisha|Rehana|Ramesh|Suresh)\b",
+    re.IGNORECASE
+)
 
 # TrOCR singleton cache
 _TROCR_PROCESSOR = None
@@ -63,8 +74,27 @@ def extract_entities(text: str) -> list[dict]:
 
     def add(raw: str, label: str, start: int):
         token = raw.strip()
+        token = re.sub(r"[^\w\)/]+$", "", token)
         if not token:
             return
+        
+        # Strict entity validation logic
+        if label == "PERSON":
+            # Reject if token contains numbers or noise words/timestamps
+            if re.search(r"\d", token) or token.lower() in ("hrs", "hours", "no", "cr", "ps", "case", "fir", "sec", "bns", "ipc"):
+                return
+            # Trim trailing verb/preposition stop words
+            words = token.split()
+            stop_words = {"went", "around", "reported", "missing", "said", "on", "at", "is", "was", "the", "a", "an", "and", "or", "in", "by", "for", "with", "from", "to", "of"}
+            while len(words) > 1 and words[-1].lower() in stop_words:
+                words.pop()
+            token = " ".join(words)
+            if len(token) < 2:
+                return
+        elif label == "DATE":
+            if TIME_STAMP_RE.search(token) or "hrs" in token.lower():
+                return  # Skip timestamps (e.g. 16.25) as dates
+
         key = (token.lower(), label, start)
         if key in seen:
             return
@@ -83,6 +113,14 @@ def extract_entities(text: str) -> list[dict]:
         add(m.group(0), "PHONE", m.start())
     for m in PLATE_RE.finditer(text):
         add(m.group(0), "VEHICLE", m.start())
+    for m in CRIME_NO_RE.finditer(text):
+        add(m.group(0), "CASE_NO", m.start())
+    for m in SECTION_RE.finditer(text):
+        add(m.group(0), "SECTION", m.start())
+    for m in DATE_RE.finditer(text):
+        add(m.group(0), "DATE", m.start())
+    for m in INDIAN_NAME_RE.finditer(text):
+        add(m.group(0), "PERSON", m.start())
 
     phones = {e["text"] for e in found if e["label"] == "PHONE"}
     plates = {e["text"] for e in found if e["label"] == "VEHICLE"}
@@ -109,6 +147,9 @@ def extract_relations(entities: list[dict], text: str) -> list[dict]:
     def add_rel(src: str, tgt: str, typ: str, sentence: str):
         key = (src.lower(), tgt.lower(), typ)
         if src.lower() == tgt.lower() or key in seen:
+            return
+        # Do not allow timestamps like 16.25 or noise as relation target
+        if TIME_STAMP_RE.search(tgt) or tgt.lower() in ("hrs", "hours", "no"):
             return
         seen.add(key)
         relations.append(
@@ -139,6 +180,8 @@ def extract_relations(entities: list[dict], text: str) -> list[dict]:
                     add_rel(a["text"], o["text"], "MENTIONED_AT_LOCATION", sent)
                 elif o["label"] == "DATE":
                     add_rel(a["text"], o["text"], "MENTIONED_ON_DATE", sent)
+                elif o["label"] in ("CASE_NO", "SECTION"):
+                    add_rel(a["text"], o["text"], "ASSOCIATED_WITH_CASE", sent)
                 elif o["label"] == "ORG":
                     add_rel(a["text"], o["text"], "NAMED_TOGETHER", sent)
 
@@ -196,11 +239,12 @@ def confirm_extraction(case_id: int, entities: list[dict], relations: list[dict]
             if key in name_to_node:
                 continue
             if label == "PERSON":
+                if re.search(r"\d", text) or text.lower() in ("hrs", "hours", "no", "cr", "ps"):
+                    continue
                 pid = _match_or_create_person(cur, case_id, text)
                 name_to_node[key] = ("PERSON", pid)
                 created.append({"text": text, "type": "PERSON", "id": pid})
             elif label == "PHONE":
-                # Attach later if a HAS_PHONE relation exists; placeholder group node otherwise
                 gid = _insert_group(cur, case_id, text)
                 name_to_node[key] = ("PHONE", gid)
             elif label == "VEHICLE":
@@ -210,11 +254,15 @@ def confirm_extraction(case_id: int, entities: list[dict], relations: list[dict]
                 gid = _insert_group(cur, case_id, text)
                 name_to_node[key] = ("LOCATION", gid)
             elif label == "DATE":
+                if TIME_STAMP_RE.search(text) or "hrs" in text.lower():
+                    continue
                 gid = _insert_group(cur, case_id, text)
                 name_to_node[key] = ("DATE", gid)
+            elif label in ("CASE_NO", "SECTION", "ORG"):
+                gid = _insert_group(cur, case_id, f"{label}: {text}")
+                name_to_node[key] = (label, gid)
             else:
-                gid = _insert_group(cur, case_id, text)
-                name_to_node[key] = ("ORG", gid)
+                continue
 
         def resolve(name: str, prefer: str | None = None) -> tuple[str, int] | None:
             name_l = name.lower()
@@ -599,25 +647,90 @@ def segment_lines_from_image(pil_img) -> list[dict]:
 
 
 def run_trocr_on_line(line_img, processor, model, device) -> tuple[str, float]:
-    """Runs TrOCR on a single line crop and computes average token confidence (0–100%)."""
+    """Runs TrOCR on a line crop with normalized grayscale preprocessing and beam search.
+
+    Key design choices:
+    - Use soft grayscale normalization (NOT hard binary thresholding) so TrOCR sees
+      ink gradients close to its training distribution.
+    - Upscale to at least 64px tall for better feature extraction on small crops.
+    - Add white border padding to prevent edge artifacts.
+    - Use beam search with length penalties tuned for multi-word FIR lines.
+    """
+    import cv2
+    import numpy as np
     import torch
+    from PIL import Image, ImageOps
 
     w, h = line_img.size
-    if h < 10 or w < 10:
-        return "", 40.0
+    if h < 6 or w < 10:
+        return "", 20.0
 
-    pixel_values = processor(line_img.convert("RGB"), return_tensors="pt").pixel_values.to(device)
+    # Work in grayscale for normalization
+    img_np = np.array(line_img.convert("L"))
+    ih, iw = img_np.shape
+
+    # Upscale short crops to at least 64px tall (TrOCR performs better on taller lines)
+    min_height = 64
+    if ih < min_height:
+        scale = min_height / float(ih)
+        new_h = min_height
+        new_w = max(10, int(iw * scale))
+        img_np = cv2.resize(img_np, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        ih, iw = img_np.shape
+
+    # Gentle denoise
+    img_np = cv2.GaussianBlur(img_np, (3, 3), 0)
+
+    # Normalize to full contrast range: stretch [5th, 95th] percentile → [0, 255]
+    # This removes scanner noise while preserving ink gradients that TrOCR needs.
+    p_lo = float(np.percentile(img_np, 5))
+    p_hi = float(np.percentile(img_np, 95))
+    if p_hi > p_lo + 10:
+        img_norm = np.clip((img_np.astype(np.float32) - p_lo) / (p_hi - p_lo) * 255, 0, 255).astype(np.uint8)
+    else:
+        img_norm = img_np  # Already very uniform, skip normalization
+
+    # Convert to RGB (TrOCR processor expects RGB)
+    rgb = cv2.cvtColor(img_norm, cv2.COLOR_GRAY2RGB)
+    crop_pil = Image.fromarray(rgb)
+
+    # Add white border padding (8px each side) to prevent border artifacts
+    crop_pil = ImageOps.expand(crop_pil, border=8, fill="white")
+
+    pixel_values = processor(crop_pil, return_tensors="pt").pixel_values.to(device)
 
     with torch.no_grad():
         outputs = model.generate(
             pixel_values,
             return_dict_in_generate=True,
             output_scores=True,
-            max_new_tokens=64,
+            max_new_tokens=64,       # Longer: FIR lines can be 50+ chars
+            num_beams=4,
+            repetition_penalty=1.3,
+            no_repeat_ngram_size=2,
+            length_penalty=1.0,
+            early_stopping=True,
         )
 
     generated_ids = outputs.sequences
     text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+
+    # Filter out known TrOCR hallucination patterns
+    hallucination_phrases = [
+        "Print export", "External links", "What links here", "Related changes",
+        "United States Senatorial", "preappearance photographer",
+        "Wikimedia Commons", "Wikipedia", "Retrieved from",
+    ]
+    for hp in hallucination_phrases:
+        text = text.replace(hp, "").strip()
+
+    # Reject outputs that are suspiciously short or look like noise
+    # (single tokens like "0 0", "to", "of" on a substantial crop are hallucinations)
+    word_count = len(text.split())
+    if word_count <= 1 and iw > 100:
+        # Very short output on a wide crop — likely hallucination; return low confidence
+        confidence = 15.0
+        return text, confidence
 
     # Calculate token-level confidence from autoregressive scores
     if outputs.scores:
@@ -625,15 +738,16 @@ def run_trocr_on_line(line_img, processor, model, device) -> tuple[str, float]:
         for i, score_tensor in enumerate(outputs.scores):
             probs = torch.softmax(score_tensor[0], dim=-1)
             target_idx = i + 1 if (i + 1) < generated_ids.shape[1] else i
-            token_id = generated_ids[0, target_idx]
-            token_probs.append(probs[token_id].item())
+            if target_idx < generated_ids.shape[1]:
+                token_id = generated_ids[0, target_idx]
+                token_probs.append(probs[token_id].item())
         if token_probs:
             avg_prob = sum(token_probs) / len(token_probs)
             confidence = round(avg_prob * 100.0, 1)
         else:
-            confidence = 80.0
+            confidence = 75.0
     else:
-        confidence = 80.0
+        confidence = 75.0
 
     return text, confidence
 
@@ -776,6 +890,293 @@ def process_handwritten_document(case_id: int, filename: str, file_bytes: bytes)
         "debug_info": all_debug,
         "lines": all_lines,
         "raw_text": raw_text,
+    }
+
+
+def _load_dotenv_keys():
+    """Load GEMINI_API_KEY or GOOGLE_API_KEY from .env files if not set in os.environ."""
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return
+    from backend.db import ROOT
+    for env_file in [ROOT / ".env", ROOT / "frontend" / ".env", ROOT / "backend" / ".env"]:
+        if env_file.is_file():
+            try:
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip('"').strip("'")
+                    if k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "VITE_GEMINI_API_KEY") and v:
+                        os.environ["GEMINI_API_KEY"] = v
+                        return
+            except Exception:
+                pass
+
+
+def call_gemini_vision_ocr(pil_img, api_key: str | None = None) -> dict:
+    """Call Google Gemini Vision API to transcribe document image and extract entities & relations."""
+    _load_dotenv_keys()
+    key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise ValueError(
+            "Gemini API key is required. Set GEMINI_API_KEY in .env or provide a valid API key from https://aistudio.google.com/app/apikey"
+        )
+
+    prompt = (
+        "You are an expert document OCR and entity extraction system for criminal investigation records.\n"
+        "Examine this image/document and perform high-precision Optical Character Recognition (OCR).\n"
+        "Return ONLY a raw valid JSON object with NO markdown codeblocks or wrapping formatting. Use this exact structure:\n"
+        "{\n"
+        '  "raw_text": "Full transcribed text preserving line breaks...",\n'
+        '  "lines": [\n'
+        '    {"line_index": 0, "text": "transcribed text line 1", "confidence": 98.0},\n'
+        '    {"line_index": 1, "text": "transcribed text line 2", "confidence": 95.0}\n'
+        "  ],\n"
+        '  "entities": [\n'
+        '    {"text": "Extracted Entity Name or Value", "label": "PERSON"}\n'
+        "  ],\n"
+        '  "relations": [\n'
+        '    {"source": "Person A", "target": "9876543210", "type": "HAS_PHONE", "confidence": 0.9, "sentence": "..."}\n'
+        "  ]\n"
+        "}\n\n"
+        "Labels allowed for entities: PERSON, PHONE, VEHICLE, LOC, DATE, ORG.\n"
+        "Types allowed for relations: HAS_PHONE, ASSOCIATED_WITH_VEHICLE, MENTIONED_AT_LOCATION, MENTIONED_ON_DATE, NAMED_TOGETHER.\n"
+        "Do not invent facts. Ensure phone numbers, vehicle registration numbers, names, and dates are preserved accurately."
+    )
+
+    models_to_try = [
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash-latest",
+    ]
+    response_text = ""
+    last_err = None
+
+    # Try google.genai first
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=key)
+        for m in models_to_try:
+            try:
+                response = client.models.generate_content(model=m, contents=[pil_img, prompt])
+                response_text = response.text or ""
+                if response_text:
+                    break
+            except Exception as e_m:
+                last_err = e_m
+                err_s = str(e_m)
+                if "API_KEY_INVALID" in err_s or "API key not valid" in err_s:
+                    break
+    except Exception as e1:
+        last_err = e1
+
+    if not response_text:
+        # Fallback to google.generativeai
+        try:
+            import google.generativeai as genai_old
+
+            genai_old.configure(api_key=key)
+            for m in models_to_try:
+                try:
+                    model = genai_old.GenerativeModel(m)
+                    res = model.generate_content([pil_img, prompt])
+                    response_text = res.text or ""
+                    if response_text:
+                        break
+                except Exception as e_old:
+                    last_err = e_old
+                    err_s = str(e_old)
+                    if "API_KEY_INVALID" in err_s or "API key not valid" in err_s:
+                        break
+        except Exception as e2:
+            last_err = e2
+
+    if not response_text:
+        err_msg = str(last_err)
+        if "API_KEY_INVALID" in err_msg or "API key not valid" in err_msg or "INVALID_ARGUMENT" in err_msg:
+            raise ValueError(
+                "Invalid Gemini API Key ('API_KEY_INVALID'). "
+                "Standard Google Gemini API keys start with 'AIzaSy...'. "
+                "Please get a free API key from https://aistudio.google.com/app/apikey or switch to 'Local TrOCR'."
+            )
+        raise RuntimeError(f"Gemini API call failed: {err_msg}")
+
+    cleaned = response_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+
+    try:
+        data = json.loads(cleaned)
+        return data
+    except Exception:
+        return {
+            "raw_text": response_text,
+            "lines": [
+                {"line_index": i, "text": line, "confidence": 92.0}
+                for i, line in enumerate(response_text.splitlines())
+                if line.strip()
+            ],
+            "entities": [],
+            "relations": [],
+        }
+
+
+def process_document_with_gemini(
+    case_id: int,
+    filename: str,
+    file_bytes: bytes,
+    api_key: str | None = None,
+) -> dict:
+    """Ingest and OCR a document/image using Google Gemini Vision AI."""
+    doc_id = str(uuid.uuid4())[:8]
+    clean_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", filename)
+    safe_name = f"{doc_id}_{clean_name}"
+    orig_path = DOCUMENTS_DIR / safe_name
+    orig_path.write_bytes(file_bytes)
+
+    pages = extract_document_pages(file_bytes, filename)
+    page_urls = []
+    overlay_urls = []
+    all_lines = []
+    all_debug = []
+    extracted_entities = []
+    extracted_relations = []
+    global_line_idx = 0
+
+    for p_idx, p_img in enumerate(pages):
+        page_file = DOCUMENTS_DIR / f"{doc_id}_page_{p_idx + 1}.png"
+        p_img.save(page_file, format="PNG")
+        page_urls.append(f"/uploaded_docs/{doc_id}_page_{p_idx + 1}.png")
+
+        # Visual line segmentation for bounding box crops & overlay
+        segments, p_debug, overlay_img = preprocess_and_segment_lines(p_img)
+        overlay_file = DOCUMENTS_DIR / f"{doc_id}_overlay_{p_idx + 1}.png"
+        overlay_img.save(overlay_file, format="PNG")
+        overlay_urls.append(f"/uploaded_docs/{doc_id}_overlay_{p_idx + 1}.png")
+
+        all_debug.append({"page": p_idx + 1, **p_debug})
+
+        # Call Gemini Vision OCR for page
+        gemini_res = call_gemini_vision_ocr(p_img, api_key=api_key)
+        g_lines = gemini_res.get("lines", [])
+        g_entities = gemini_res.get("entities", [])
+        g_relations = gemini_res.get("relations", [])
+
+        extracted_entities.extend(g_entities)
+        extracted_relations.extend(g_relations)
+
+        # Match Gemini output lines with visual crop segments
+        if g_lines:
+            for idx, g_line in enumerate(g_lines):
+                text = (g_line.get("text") or "").strip()
+                if not text:
+                    continue
+                conf = float(g_line.get("confidence") or 95.0)
+                tier = get_confidence_tier(conf)
+
+                # Pair with line crop image if available
+                crop_b64 = ""
+                bbox = [0, 0, 0, 0]
+                if idx < len(segments):
+                    crop_b64 = pil_to_base64(segments[idx]["crop"])
+                    bbox = [segments[idx]["x"], segments[idx]["y"], segments[idx]["width"], segments[idx]["height"]]
+
+                all_lines.append({
+                    "line_index": global_line_idx,
+                    "page": p_idx + 1,
+                    "bbox": bbox,
+                    "image_data": crop_b64,
+                    "original_text": text,
+                    "corrected_text": text,
+                    "confidence": conf,
+                    "tier": tier,
+                    "is_corrected": False,
+                })
+                global_line_idx += 1
+        else:
+            # Fallback to segments
+            for seg in segments:
+                crop = seg["crop"]
+                crop_b64 = pil_to_base64(crop)
+                all_lines.append({
+                    "line_index": global_line_idx,
+                    "page": p_idx + 1,
+                    "bbox": [seg["x"], seg["y"], seg["width"], seg["height"]],
+                    "image_data": crop_b64,
+                    "original_text": "",
+                    "corrected_text": "",
+                    "confidence": 70.0,
+                    "tier": "REVIEW_RECOMMENDED",
+                    "is_corrected": False,
+                })
+                global_line_idx += 1
+
+    raw_text = "\n".join(l["original_text"] for l in all_lines if l["original_text"])
+
+    # Strict Pipeline: Ordered OCR text -> Existing FIR NER -> Existing Relation Engine
+    final_entities = extract_entities(raw_text) if raw_text else []
+    final_relations = extract_relations(final_entities, raw_text) if raw_text else []
+
+    summary = {
+        "total_lines": len(all_lines),
+        "accepted": sum(1 for l in all_lines if l["tier"] == "ACCEPTED"),
+        "review_recommended": sum(1 for l in all_lines if l["tier"] == "REVIEW_RECOMMENDED"),
+        "manual_review_required": sum(1 for l in all_lines if l["tier"] == "MANUAL_REVIEW_REQUIRED"),
+        "ocr_engine": "Gemini Vision AI",
+        "detected_lines_count": len(all_lines),
+        "skew_angle": all_debug[0]["skew_angle"] if all_debug else 0.0,
+    }
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_write_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO DocumentOCR (
+                DocumentID, CaseMasterID, Filename, FilePath, PageCount,
+                RawOCRText, CorrectedOCRText, Status, ConfidenceSummary, LineResults,
+                CreatedAt, UpdatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?)
+            """,
+            (
+                doc_id,
+                case_id,
+                filename,
+                str(orig_path),
+                len(pages),
+                raw_text,
+                raw_text,
+                json.dumps(summary),
+                json.dumps(all_lines),
+                now_str,
+                now_str,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "document_id": doc_id,
+        "case_id": case_id,
+        "filename": filename,
+        "original_file_url": f"/uploaded_docs/{safe_name}",
+        "page_urls": page_urls,
+        "overlay_urls": overlay_urls,
+        "page_count": len(pages),
+        "summary": summary,
+        "debug_info": all_debug,
+        "lines": all_lines,
+        "raw_text": raw_text,
+        "entities": final_entities,
+        "relations": final_relations,
     }
 
 

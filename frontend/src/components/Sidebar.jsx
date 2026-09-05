@@ -3,7 +3,7 @@ const NAV = [
   { id: "identity", label: "Identity" },
   { id: "dna", label: "Case DNA" },
   { id: "hypotheses", label: "Hypotheses" },
-  { id: "upload", label: "Upload Document" },
+  { id: "upload", label: "Evidence & CCTV Upload" },
   { id: "copilot", label: "Copilot" },
 ];
 
