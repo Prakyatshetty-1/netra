@@ -52,3 +52,35 @@ export const confirmExtraction = (caseId, payload) =>
 
 export const createCase = (payload) =>
   axios.post(`${BASE}/cases`, payload).then((r) => r.data);
+
+export const startDigiLockerVerification = (
+  caseId,
+  personId
+) =>
+  axios
+    .get(
+      `${BASE}/cases/${caseId}/persons/${personId}/digilocker/start`
+    )
+    .then((r) => r.data);
+
+
+export const mockDigiLockerVerification = (
+  caseId,
+  personId
+) =>
+  axios
+    .post(
+      `${BASE}/cases/${caseId}/persons/${personId}/digilocker/mock-verify`
+    )
+    .then((r) => r.data);
+
+
+export const getDigiLockerVerification = (
+  caseId,
+  personId
+) =>
+  axios
+    .get(
+      `${BASE}/cases/${caseId}/persons/${personId}/digilocker`
+    )
+    .then((r) => r.data);

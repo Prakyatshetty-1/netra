@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import SearchBar from "./components/SearchBar";
 import GraphCanvas from "./components/GraphCanvas";
 import IdentityPanel from "./components/IdentityPanel";
+import DigiLockerPanel from "./components/DigiLockerPanel";
 import RelatedCasesPanel from "./components/RelatedCasesPanel";
 import HypothesisPanel from "./components/HypothesisPanel";
 import ContradictionPanel from "./components/ContradictionPanel";
@@ -149,7 +150,14 @@ export default function App() {
         {page === "identity" && (
           <div className="page-view">
             <h1 className="page-title">Identity</h1>
+
             <IdentityPanel identity={identity} />
+
+            <DigiLockerPanel
+              caseId={selectedCaseId}
+              personId={selectedPersonId}
+              personName={personLabel}
+            />
           </div>
         )}
         {page === "dna" && (
