@@ -63,7 +63,7 @@ def _fetch_labels(nodes: dict[str, dict[str, Any]]) -> None:
             if key in nodes:
                 nodes[key]["label"] = row["PhoneNumber"]
 
-    group_types = ("LOCATION", "DATE", "ORG", "PHONE", "VEHICLE")
+    group_types = ("LOCATION", "DATE", "ORG", "PHONE", "VEHICLE", "EVIDENCE_GROUP", "PHOTO")
     group_ids = [n["entity_id"] for n in nodes.values() if n["type"] in group_types and n["entity_id"]]
     if group_ids:
         placeholders = ",".join("?" * len(group_ids))
@@ -79,6 +79,10 @@ def _fetch_labels(nodes: dict[str, dict[str, Any]]) -> None:
     for n in nodes.values():
         if n["type"] == "LOCATION" and (n.get("label") == n["id"] or not n.get("label")):
             n["label"] = "Incident scene" if n["entity_id"] == 0 else n.get("label") or n["id"]
+        if n["type"] == "PHOTO" and not n.get("label"):
+            n["label"] = f"Photo #{n['entity_id']}"
+        if n["type"] == "EVIDENCE_GROUP" and not n.get("label"):
+            n["label"] = f"Evidence #{n['entity_id']}"
 
 
 def fetch_case_edges(case_id: int) -> list[dict[str, Any]]:

@@ -52,3 +52,12 @@ export const confirmExtraction = (caseId, payload) =>
 
 export const createCase = (payload) =>
   axios.post(`${BASE}/cases`, payload).then((r) => r.data);
+
+export const uploadImage = (caseId, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return axios.post(`${BASE}/cases/${caseId}/upload-image`, form).then((r) => r.data);
+};
+
+export const confirmImageExtraction = (caseId, payload) =>
+  axios.post(`${BASE}/cases/${caseId}/upload-image/confirm`, payload).then((r) => r.data);

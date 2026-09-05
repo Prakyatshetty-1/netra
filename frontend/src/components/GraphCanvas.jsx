@@ -2,21 +2,35 @@ import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 
 export const EDGE_KIND_META = {
-  pp:    { color: "#ff6b00", label: "Person ↔ Person (NAMED_TOGETHER, CO_ACCUSED, …)" },
+  pp:    { color: "#ff6b00", label: "Person ↔ Person (NAMED_TOGETHER, CO_ACCUSED, CO_APPEARS_IN_PHOTO)" },
   phone: { color: "#5b8def", label: "Phone / Mobile / OTP / Call (HAS_PHONE, CALLED)" },
-  loc:   { color: "#f2f2f2", label: "Location / Place (MENTIONED_AT_LOCATION, CO_LOCATED)" },
+  loc:   { color: "#f2f2f2", label: "Location / Place (MENTIONED_AT_LOCATION, CO_LOCATED, PHOTOGRAPHED_AT)" },
   veh:   { color: "#4ad29e", label: "Vehicle / Registration (ASSOCIATED_WITH_VEHICLE)" },
   org:   { color: "#c27bff", label: "Organisation / Company" },
   date:  { color: "#ffd257", label: "Date / Time (MENTIONED_ON_DATE)" },
+  photo: { color: "#ffa3e6", label: "Photo evidence (DEPICTED_IN_PHOTO, DEPICTS_OBJECT)" },
   other: { color: "#6a6a6a", label: "Other / Uncategorised" },
 };
 
 function classifyEdge(edge, nodeTypeOf) {
   const rel = (edge.relation || "").toUpperCase();
+  const src = edge.source_type || "";
   const st = nodeTypeOf(edge.source);
   const tt = nodeTypeOf(edge.target);
   const types = new Set([st, tt]);
 
+  if (
+    types.has("PHOTO") ||
+    types.has("EVIDENCE_GROUP") ||
+    src === "IMAGE_UPLOAD" ||
+    src === "EXIF" ||
+    rel === "DEPICTED_IN_PHOTO" ||
+    rel === "DEPICTS_OBJECT" ||
+    rel === "CO_APPEARS_IN_PHOTO" ||
+    rel === "PHOTOGRAPHED_AT"
+  ) {
+    return "photo";
+  }
   if (types.has("PHONE") || rel === "HAS_PHONE" || rel === "CALLED" || rel === "SMS" || rel === "OTP" || rel === "TOWER_LOG") {
     return "phone";
   }
@@ -113,7 +127,8 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
     }
     for (const e of collapsed) {
       const srcType = e.source_type || "";
-      const dashed = srcType === "PDF_UPLOAD" || srcType === "TOWER_LOG";
+      const dashed =
+        srcType === "PDF_UPLOAD" || srcType === "TOWER_LOG" || srcType === "IMAGE_UPLOAD" || srcType === "EXIF";
       const classes = [
         e.highlighted ? "hl" : "",
         dashed ? "pdf" : "",
@@ -216,6 +231,10 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
         {
           selector: "edge.kind-date",
           style: { "line-color": EDGE_KIND_META.date.color, width: 1.8 },
+        },
+        {
+          selector: "edge.kind-photo",
+          style: { "line-color": EDGE_KIND_META.photo.color, width: 2 },
         },
         {
           selector: "edge.hl",

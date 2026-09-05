@@ -18,14 +18,17 @@ from backend.routers import (
     graph,
     hypothesis,
     identity,
+    image_upload,
 )
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+ANNOTATED_DIR = FRONTEND / "annotated"
+ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="NETRA Prototype",
     description="Evidence-centric criminal-network analysis dashboard (SIH PS 26189).",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -46,7 +49,9 @@ app.include_router(counterfactual.router)
 app.include_router(copilot.router)
 app.include_router(decisions.router)
 app.include_router(extraction.router)
+app.include_router(image_upload.router)
 
+app.mount("/annotated", StaticFiles(directory=ANNOTATED_DIR), name="annotated")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 

@@ -10,6 +10,7 @@ import HypothesisPanel from "./components/HypothesisPanel";
 import ContradictionPanel from "./components/ContradictionPanel";
 import CounterfactualPanel from "./components/CounterfactualPanel";
 import UploadPanel from "./components/UploadPanel";
+import ImageUploadPanel from "./components/ImageUploadPanel";
 import CopilotPanel from "./components/CopilotPanel";
 import DecisionBar from "./components/DecisionBar";
 
@@ -108,6 +109,12 @@ export default function App() {
     }
   }
 
+  async function handleImageExtractConfirmed(graph, meta = {}) {
+    setHighlightedGraph(null);
+    await refetchGraph();
+    setPage("graph");
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -170,6 +177,12 @@ export default function App() {
           <div className="page-view">
             <h1 className="page-title">Upload Document</h1>
             <UploadPanel caseId={selectedCaseId} onConfirmed={handleExtractConfirmed} />
+          </div>
+        )}
+        {page === "photo" && (
+          <div className="page-view">
+            <h1 className="page-title">Upload Photo / Visual Evidence</h1>
+            <ImageUploadPanel caseId={selectedCaseId} onConfirmed={handleImageExtractConfirmed} />
           </div>
         )}
         {page === "copilot" && (

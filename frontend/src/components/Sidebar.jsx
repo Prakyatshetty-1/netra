@@ -4,6 +4,7 @@ const NAV = [
   { id: "dna", label: "Case DNA" },
   { id: "hypotheses", label: "Hypotheses" },
   { id: "upload", label: "Upload Document" },
+  { id: "photo", label: "Upload Photo" },
   { id: "copilot", label: "Copilot" },
 ];
 
