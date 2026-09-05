@@ -791,3 +791,69 @@ input[type="file"]::file-selector-button:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* TrOCR Handwritten OCR review & side-by-side styles */
+.badge-chip {
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.chip-accepted {
+  background: rgba(0, 200, 83, 0.15);
+  color: #00c853;
+  border: 1px solid rgba(0, 200, 83, 0.4);
+}
+.chip-review {
+  background: rgba(255, 179, 0, 0.15);
+  color: #ffb300;
+  border: 1px solid rgba(255, 179, 0, 0.4);
+}
+.chip-manual {
+  background: rgba(255, 61, 61, 0.15);
+  color: #ff3d3d;
+  border: 1px solid rgba(255, 61, 61, 0.4);
+}
+
+.confidence-badge {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.badge-accepted {
+  background: #004d20;
+  color: #4ce685;
+  border: 1px solid #008738;
+}
+.badge-review {
+  background: #4a3200;
+  color: #ffc44d;
+  border: 1px solid #8f6200;
+}
+.badge-manual {
+  background: #4a0d0d;
+  color: #ff8585;
+  border: 1px solid #8f1919;
+}
+
+.badge-edited {
+  background: #2a1b0a;
+  color: var(--orange-400);
+  border: 1px solid var(--orange-500);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+.ocr-split-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 16px;
+}
+
+@media (max-width: 990px) {
+  .ocr-split-layout {
+    grid-template-columns: 1fr;
+  }
+}
+

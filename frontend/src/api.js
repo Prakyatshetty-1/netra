@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export function apiError(err) {
   const detail = err?.response?.data?.detail;
@@ -52,3 +52,16 @@ export const confirmExtraction = (caseId, payload) =>
 
 export const createCase = (payload) =>
   axios.post(`${BASE}/cases`, payload).then((r) => r.data);
+
+export const uploadOcrDocument = (caseId, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return axios.post(`${BASE}/cases/${caseId}/ocr/upload`, form).then((r) => r.data);
+};
+
+export const verifyOcrLines = (caseId, payload) =>
+  axios.post(`${BASE}/cases/${caseId}/ocr/verify`, payload).then((r) => r.data);
+
+export const getOcrDocument = (caseId, docId) =>
+  axios.get(`${BASE}/cases/${caseId}/ocr/documents/${docId}`).then((r) => r.data);
+

@@ -47,6 +47,9 @@ app.include_router(copilot.router)
 app.include_router(decisions.router)
 app.include_router(extraction.router)
 
+from backend.db import DOCUMENTS_DIR
+
+app.mount("/uploaded_docs", StaticFiles(directory=DOCUMENTS_DIR), name="uploaded_docs")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
