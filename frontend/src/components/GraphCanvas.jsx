@@ -1,77 +1,36 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 
-export const EDGE_KIND_META = {
-  pp:    { color: "#ff6b00", label: "Person ↔ Person (NAMED_TOGETHER, CO_ACCUSED, …)" },
-  phone: { color: "#5b8def", label: "Phone / Mobile / OTP / Call (HAS_PHONE, CALLED)" },
-  loc:   { color: "#f2f2f2", label: "Location / Place (MENTIONED_AT_LOCATION, CO_LOCATED)" },
-  veh:   { color: "#4ad29e", label: "Vehicle / Registration (ASSOCIATED_WITH_VEHICLE)" },
-  org:   { color: "#c27bff", label: "Organisation / Company" },
-  date:  { color: "#ffd257", label: "Date / Time (MENTIONED_ON_DATE)" },
-  other: { color: "#6a6a6a", label: "Other / Uncategorised" },
-};
-
-function classifyEdge(edge, nodeTypeOf) {
-  const rel = (edge.relation || "").toUpperCase();
-  const st = nodeTypeOf(edge.source);
-  const tt = nodeTypeOf(edge.target);
-  const types = new Set([st, tt]);
-
-  if (types.has("PHONE") || rel === "HAS_PHONE" || rel === "CALLED" || rel === "SMS" || rel === "OTP" || rel === "TOWER_LOG") {
-    return "phone";
-  }
-  if (types.has("LOC") || types.has("LOCATION") || rel === "MENTIONED_AT_LOCATION" || rel === "CO_LOCATED" || rel === "AT_LOCATION") {
-    return "loc";
-  }
-  if (types.has("VEHICLE") || rel === "ASSOCIATED_WITH_VEHICLE" || rel === "OWNED_VEHICLE" || rel === "ANPR_SEEN") {
-    return "veh";
-  }
-  if (types.has("ORG") || rel === "WORKS_AT" || rel === "MEMBER_OF") {
-    return "org";
-  }
-  if (types.has("DATE") || rel === "MENTIONED_ON_DATE" || rel === "ON_DATE" || rel === "OCCURRED_ON") {
-    return "date";
-  }
-  if (st === "PERSON" && tt === "PERSON") {
-    return "pp";
-  }
-  return "other";
-}
-
-function collapseEdges(edges, nodeTypeOf) {
+function collapseEdges(edges) {
   const map = new Map();
   for (const e of edges || []) {
     const a = String(e.source);
     const b = String(e.target);
     const key = a < b ? `${a}|${b}` : `${b}|${a}`;
     const conf = e.confidence ?? e.ConfidenceScore ?? 0.5;
-    const kind = classifyEdge(e, nodeTypeOf);
     const prev = map.get(key);
-    if (!prev) {
-      map.set(key, {
-        id: "e" + e.id,
-        source: e.source,
-        target: e.target,
-        relation: e.relation,
-        burst: !!e.burst,
-        highlighted: !!e.highlighted,
-        confidence: conf,
-        source_type: e.source_type || "",
-        kind,
-      });
-    } else {
-      prev.burst = prev.burst || !!e.burst;
-      prev.highlighted = prev.highlighted || !!e.highlighted;
-      prev.confidence = Math.max(prev.confidence, conf);
-      if ((e.source_type || "") === "PDF_UPLOAD") prev.source_type = "PDF_UPLOAD";
-      if (prev.kind === "other" && kind !== "other") prev.kind = kind;
-      if (prev.kind === "pp" && (kind === "phone" || kind === "loc")) prev.kind = kind;
-    }
+        if (!prev) {
+          map.set(key, {
+            id: "e" + e.id,
+            source: e.source,
+            target: e.target,
+            relation: e.relation,
+            burst: !!e.burst,
+            highlighted: !!e.highlighted,
+            confidence: conf,
+            source_type: e.source_type || "",
+          });
+        } else {
+          prev.burst = prev.burst || !!e.burst;
+          prev.highlighted = prev.highlighted || !!e.highlighted;
+          prev.confidence = Math.max(prev.confidence, conf);
+          if ((e.source_type || "") === "PDF_UPLOAD") prev.source_type = "PDF_UPLOAD";
+        }
   }
   return [...map.values()];
 }
 
-export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }) {
+export default function GraphCanvas({ graphData, onNodeClick, selectedEntity }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
   const clickRef = useRef(onNodeClick);
@@ -80,24 +39,11 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
   useEffect(() => {
     if (!containerRef.current || !graphData) return undefined;
 
-    const nodes = graphData.nodes || [];
-    const typeById = new Map(nodes.map(n => [n.id, (n.type || "").toUpperCase()]));
-    // Draft node IDs look like DRAFT-PERSON:1  or  DRAFT-LOC:1 — also handle Person:123 format
-    const nodeTypeOf = (id) => {
-      const s = String(id);
-      if (typeById.has(s)) return typeById.get(s);
-      const stripped = s.startsWith("DRAFT-") ? s.slice(6) : s;
-      const head = stripped.split(":")[0] || "";
-      const up = head.toUpperCase();
-      if (up === "LOCATION") return "LOC";
-      return up || "OTHER";
-    };
-
-    const searchActive = nodes.some((n) => n.highlighted);
-    const collapsed = collapseEdges(graphData.edges, nodeTypeOf);
+    const searchActive = (graphData.nodes || []).some((n) => n.highlighted);
+    const collapsed = collapseEdges(graphData.edges);
 
     const elements = [];
-    for (const n of nodes) {
+    for (const n of graphData.nodes || []) {
       const label = n.label || n.id;
       elements.push({
         data: {
@@ -115,13 +61,13 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
       const srcType = e.source_type || "";
       const dashed = srcType === "PDF_UPLOAD" || srcType === "TOWER_LOG";
       const classes = [
+        e.burst ? "burst" : "",
         e.highlighted ? "hl" : "",
         dashed ? "pdf" : "",
-        `kind-${e.kind}`,
       ]
         .filter(Boolean)
         .join(" ");
-      elements.push({ data: { ...e, dashed: dashed ? 1 : 0 }, classes });
+      elements.push({ data: e, classes });
     }
 
     if (cyRef.current) {
@@ -183,46 +129,21 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
         {
           selector: "edge",
           style: {
-            width: 1.8,
-            "line-color": EDGE_KIND_META.other.color,
-            "curve-style": "bezier",
-            "bezier-curve-style": "unbundled-bezier",
-            "control-point-distances": "0 -10 10",
-            "control-point-weights": "0.25 0.5 0.75",
-            opacity: 0.92,
-            "line-cap": "round",
+            width: 1,
+            "line-color": "#4a4a4a",
+            "curve-style": "haystack",
+            "haystack-radius": 0,
+            opacity: 0.9,
           },
         },
         {
-          selector: "edge.kind-pp",
-          style: { "line-color": EDGE_KIND_META.pp.color, width: 2.2 },
-        },
-        {
-          selector: "edge.kind-phone",
-          style: { "line-color": EDGE_KIND_META.phone.color, width: 2 },
-        },
-        {
-          selector: "edge.kind-loc",
-          style: { "line-color": EDGE_KIND_META.loc.color, width: 1.8 },
-        },
-        {
-          selector: "edge.kind-veh",
-          style: { "line-color": EDGE_KIND_META.veh.color, width: 1.8 },
-        },
-        {
-          selector: "edge.kind-org",
-          style: { "line-color": EDGE_KIND_META.org.color, width: 1.8 },
-        },
-        {
-          selector: "edge.kind-date",
-          style: { "line-color": EDGE_KIND_META.date.color, width: 1.8 },
-        },
-        {
-          selector: "edge.hl",
+          selector: "edge.burst, edge.hl",
           style: {
-            width: 4,
+            width: 3.5,
+            "line-color": "#ff6b00",
+            "curve-style": "straight",
             opacity: 1,
-            "z-index": 999,
+            "line-cap": "round",
           },
         },
         {
@@ -230,6 +151,8 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
           style: {
             "line-style": "dashed",
             width: 2,
+            "line-color": "#5b8def",
+            "curve-style": "straight",
           },
         },
         {
@@ -250,7 +173,7 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
 
     if (searchActive) {
       cy.nodes().not(".hl").style({ opacity: 0.22, "border-color": "#555555" });
-      cy.edges().not(".hl").style({ opacity: 0.15, width: 1 });
+      cy.edges().not(".hl").style({ opacity: 0.12, width: 1, "line-color": "#444444" });
     }
 
     cy.on("tap", "node", (evt) => {
@@ -271,77 +194,11 @@ export default function GraphCanvas({ graphData, onNodeClick, selectedPersonId }
     const cy = cyRef.current;
     if (!cy) return;
     cy.nodes().removeClass("picked");
-    if (selectedPersonId != null) {
-      const n = cy.getElementById(`PERSON:${selectedPersonId}`);
+    if (selectedEntity?.type && selectedEntity?.entityId != null) {
+      const n = cy.getElementById(`${selectedEntity.type}:${selectedEntity.entityId}`);
       if (n && n.length) n.addClass("picked");
     }
-  }, [selectedPersonId]);
+  }, [selectedEntity]);
 
-  const kindsPresent = new Set();
-  if (graphData && graphData.nodes && graphData.nodes.length) {
-    const nodes = graphData.nodes || [];
-    const typeById = new Map(nodes.map(n => [n.id, (n.type || "").toUpperCase()]));
-    const nodeTypeOf = (id) => {
-      const s = String(id);
-      if (typeById.has(s)) return typeById.get(s);
-      const stripped = s.startsWith("DRAFT-") ? s.slice(6) : s;
-      const head = stripped.split(":")[0] || "";
-      const up = head.toUpperCase();
-      return up === "LOCATION" ? "LOC" : (up || "OTHER");
-    };
-    for (const e of graphData.edges || []) {
-      kindsPresent.add(classifyEdge(e, nodeTypeOf));
-    }
-  }
-
-  const legendEntries = Object.entries(EDGE_KIND_META).filter(
-    ([k]) => kindsPresent.size === 0 || kindsPresent.has(k) || k === "pp" || k === "phone" || k === "loc"
-  );
-
-  return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div className="graph-canvas" ref={containerRef} style={{ width: "100%", height: "100%" }} />
-      <div
-        className="graph-legend"
-        style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          zIndex: 10,
-          background: "rgba(17,17,17,0.92)",
-          border: "1px solid #2a2a2a",
-          borderRadius: 8,
-          padding: "10px 12px",
-          minWidth: 230,
-          backdropFilter: "blur(4px)",
-          fontFamily: "Segoe UI, system-ui, sans-serif",
-          fontSize: 12,
-          color: "#e0e0e0",
-          boxShadow: "0 4px 14px rgba(0,0,0,0.45)",
-          pointerEvents: "none",
-        }}
-      >
-        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 12.5, letterSpacing: 0.2, color: "#ffb77a" }}>
-          ⟡ EDGE LEGEND
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          {legendEntries.map(([key, meta]) => (
-            <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span
-                style={{
-                  width: 26,
-                  height: 0,
-                  borderTop: `${key === "pdf" ? "2px dashed" : "3px solid"} ${meta.color}`,
-                  flexShrink: 0,
-                  display: "inline-block",
-                  borderRadius: 2,
-                }}
-              />
-              <span style={{ lineHeight: "18px", color: "#c9c9c9" }}>{meta.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="graph-canvas" ref={containerRef} />;
 }

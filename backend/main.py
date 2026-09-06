@@ -7,8 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.identity_store import init_identity_db
-
 from backend.routers import (
     cases,
     casedna,
@@ -16,40 +14,36 @@ from backend.routers import (
     copilot,
     counterfactual,
     decisions,
-    digilocker,
     extraction,
     graph,
     hypothesis,
     identity,
+    entity_intelligence,
+    digilocker,
 )
 
+from backend.identity_store import init_identity_db
 
-FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+
+FRONTEND = (
+    Path(__file__).resolve().parent.parent
+    / "frontend"
+)
 
 
 app = FastAPI(
     title="NETRA Prototype",
-    description="Evidence-centric criminal-network analysis dashboard (SIH PS 26189).",
-    version="0.1.0",
+    description=(
+        "Evidence-centric criminal-network "
+        "analysis dashboard."
+    ),
+    version="0.2.0",
 )
 
 
-# ---------------------------------------------------------------------
-# Identity database initialization
-# ---------------------------------------------------------------------
-#
-# This creates netra_identity.db if it does not already exist.
-#
-# It is kept separate from netra_sim.db so the existing investigation
-# dataset is not modified.
-#
-
-init_identity_db()
-
-
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------
 # CORS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,48 +54,90 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------
-# API routers
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------
+# STARTUP
+# ------------------------------------------------------------
 
-app.include_router(cases.router)
+@app.on_event("startup")
+def startup():
+    """
+    Initialise the separate identity-verification
+    database.
 
-app.include_router(graph.router)
+    The original NETRA simulation database is not
+    modified by this function.
+    """
 
-app.include_router(identity.router)
-
-# DigiLocker identity verification
-app.include_router(digilocker.router)
-
-app.include_router(casedna.router)
-
-app.include_router(hypothesis.router)
-
-app.include_router(contradiction.router)
-
-app.include_router(counterfactual.router)
-
-app.include_router(copilot.router)
-
-app.include_router(decisions.router)
-
-app.include_router(extraction.router)
+    init_identity_db()
 
 
-# ---------------------------------------------------------------------
-# Frontend static files
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------
+# ROUTERS
+# ------------------------------------------------------------
 
-app.mount(
-    "/static",
-    StaticFiles(directory=FRONTEND),
-    name="static",
+app.include_router(
+    cases.router
+)
+
+app.include_router(
+    graph.router
+)
+
+app.include_router(
+    identity.router
+)
+
+# Existing DigiLocker OAuth / mock system.
+app.include_router(
+    digilocker.router
+)
+
+# New Entity Intelligence system.
+app.include_router(
+    entity_intelligence.router
+)
+
+app.include_router(
+    casedna.router
+)
+
+app.include_router(
+    hypothesis.router
+)
+
+app.include_router(
+    contradiction.router
+)
+
+app.include_router(
+    counterfactual.router
+)
+
+app.include_router(
+    copilot.router
+)
+
+app.include_router(
+    decisions.router
+)
+
+app.include_router(
+    extraction.router
 )
 
 
-# ---------------------------------------------------------------------
-# Root page
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------
+# FRONTEND
+# ------------------------------------------------------------
+
+app.mount(
+    "/static",
+    StaticFiles(
+        directory=FRONTEND
+    ),
+    name="static",
+)
+
 
 @app.get("/")
 def index():
