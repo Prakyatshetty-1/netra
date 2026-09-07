@@ -1,5 +1,5 @@
 # Model weights
-*.pt
+
 
 # Annotated image artifacts
 frontend/annotated/
