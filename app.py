@@ -1,10 +1,8 @@
-"""Entrypoint for Hugging Face Spaces (Gradio SDK) or direct Uvicorn launch."""
+"""Entrypoint for Hugging Face Spaces (Gradio SDK) or direct launch."""
 
 import os
-from pathlib import Path
-from backend.main import app
+from backend.main import app as fastapi_app
 
-# In Hugging Face Spaces with Gradio SDK, gradio is pre-installed.
 try:
     import gradio as gr
 
@@ -22,12 +20,13 @@ try:
         )
 
     # Mount Gradio at /gradio so root / remains the full NETRA React Dashboard
-    app = gr.mount_gradio_app(app, demo, path="/gradio")
-except ImportError:
-    pass
+    app = gr.mount_gradio_app(fastapi_app, demo, path="/gradio")
+except Exception:
+    app = fastapi_app
+    demo = None
 
 if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", 7860))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=port)
