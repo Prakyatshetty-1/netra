@@ -67,7 +67,7 @@ function draftToGraph(entities, relations, filename) {
   return { case_id: 0, nodes, edges, matched_node: null, _filename: filename };
 }
 
-export default function UploadPanel({ caseId, onConfirmed }) {
+export default function UploadPanel({ caseId, onConfirmed, panelMode = "all" }) {
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState("auto"); // "auto", "digital", "trocr"
   const [draft, setDraft] = useState(null);
@@ -282,25 +282,47 @@ export default function UploadPanel({ caseId, onConfirmed }) {
     return { accepted, review, manual, total: ocrLines.length };
   }, [ocrLines]);
 
+  const isDocOnly = panelMode === "document";
+  const isCctvOnly = panelMode === "cctv";
+
   return (
     <article className="panel-card upload" id="uploadCard">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
         <h2>
-          Evidence & CCTV Video Ingestion <span className="badge-new">INGEST</span>
+          {isDocOnly
+            ? "Document & Handwritten OCR Ingestion"
+            : isCctvOnly
+            ? "Evidence & CCTV Video Ingestion"
+            : "Evidence, Document & CCTV Video Ingestion"}{" "}
+          <span className="badge-new">INGEST</span>
         </h2>
         <span className="muted" style={{ fontSize: 12 }}>
-          YOLOv8 CCTV Detection & Gemini AI Supported
+          {isDocOnly
+            ? "Gemini Vision AI & Digital OCR Supported"
+            : isCctvOnly
+            ? "YOLOv8 CCTV Detection Supported"
+            : "YOLOv8 CCTV Detection & Gemini AI Supported"}
         </span>
       </div>
       <p className="muted" style={{ marginTop: 2, marginBottom: 12 }}>
-        Upload CCTV video clips (MP4, AVI, MOV, MKV) for <strong>YOLO object detection</strong> (people, vehicles), or upload typed/handwritten documents (PDF, images) for <strong>Gemini Vision AI OCR</strong>.
+        {isDocOnly
+          ? "Upload typed or handwritten documents (PDF, PNG, JPG, WEBP) for Gemini Vision AI OCR and Digital PDF extraction into the case graph."
+          : isCctvOnly
+          ? "Upload CCTV video clips (MP4, AVI, MOV, MKV, WEBM) for YOLO object detection (people, vehicles) with timestamped frame analysis."
+          : "Upload CCTV video clips (MP4, AVI, MOV, MKV) for YOLO object detection (people, vehicles), or upload typed/handwritten documents (PDF, images) for Gemini Vision AI OCR."}
       </p>
 
       {/* File Selection */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input
           type="file"
-          accept="application/pdf,image/*,video/*,.mp4,.avi,.mov,.mkv,.webm"
+          accept={
+            isDocOnly
+              ? "application/pdf,image/*"
+              : isCctvOnly
+              ? "video/*,.mp4,.avi,.mov,.mkv,.webm"
+              : "application/pdf,image/*,video/*,.mp4,.avi,.mov,.mkv,.webm"
+          }
           onChange={(e) => {
             const f = e.target.files?.[0] || null;
             setFile(f);

@@ -3,11 +3,11 @@ const NAV = [
   { id: "identity", label: "Identity" },
   { id: "dna", label: "Case DNA" },
   { id: "hypotheses", label: "Hypotheses" },
-  { id: "upload", label: "Evidence & CCTV Upload" },
+  { id: "upload", label: "Upload Document" },
+  { id: "cctv", label: "Evidence & CCTV Upload" },
   { id: "photo", label: "Upload Photo" },
   { id: "copilot", label: "Copilot" },
 ];
-
 
 export default function Sidebar({
   cases,
