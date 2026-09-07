@@ -1,109 +1,90 @@
 # NETRA Prototype — 100% Free Hosting Guide 🚀
 
-This guide explains how to host the complete **NETRA Evidence Analysis & Dashboard Prototype** for **100% FREE**, including cases, the Cytoscape graph canvas, YOLOv8 CCTV object detection, and document OCR.
+This guide provides proven, genuinely **100% FREE** methods to host and share the complete **NETRA Evidence Analysis & Dashboard Prototype** with judges, jury members, or your team.
 
 ---
 
-## 💡 Quick Fix for Hugging Face "Docker is Paid 🔒"
+## ⚠️ Important Update on Hugging Face Spaces
 
-In Hugging Face Spaces, the **Docker SDK** now requires a paid subscription or credit card verification. 
+As shown on the Hugging Face Space creation screen:
+- **Static** (pure HTML/JS only) is free.
+- **Gradio** 🔒 **Paid** (now requires a PRO subscription).
+- **Docker** 🔒 **Paid** (now requires a PRO subscription or credit card).
 
-**However, the "Gradio" SDK is 100% FREE, requires NO credit card, and gives you 16 GB RAM + 2 vCPUs!**
-
-We have configured `app.py` in your project so that selecting **Gradio -> Blank** runs your entire React + FastAPI prototype on Hugging Face for free!
+Because NETRA requires a Python backend (FastAPI, YOLOv8 object detection, OpenCV, and SQLite), it cannot run under Hugging Face's Static tier. Below are the **best 100% free, working alternatives**.
 
 ---
 
-## 🌟 Method 1: Hugging Face Spaces with Gradio SDK (100% Free, 16 GB RAM)
+## 🌟 Method 1: Cloudflare Quick Tunnel (Best for SIH & Live Demos)
 
-### Why this works:
-Gradio is built directly on top of FastAPI and Starlette. Our [app.py](file:///home/prakyatshetty/Documents/sihpro/app.py) mounts your full FastAPI application and serves your pre-compiled React frontend (`frontend/dist`) directly on root `/`.
+**Why this is the #1 recommended choice for hackathons & jury presentations:**
+- **100% FREE** with **NO account, NO sign-up, and NO credit card required**.
+- **Instant global HTTPS URL** (`https://xxxx.trycloudflare.com`) with Cloudflare SSL & DDoS protection.
+- Runs with your local machine's full CPU/GPU speed — **zero cold-start delay, no cloud memory limits, and no 15-minute C++ build waits**.
+- **`cloudflared` is already installed and ready on your system!**
 
 ### Step-by-Step Instructions:
 
-1. Go to **[huggingface.co/new-space](https://huggingface.co/new-space)** (as shown in your screenshot).
-2. Fill in the Space details:
-   - **Owner**: `Prakyat`
-   - **Space name**: `netra-prototype`
-   - **Short description**: `NETRA Crime Evidence & CCTV Analysis Dashboard`
-   - **License**: `mit` or `apache-2.0`
-3. Under **Select the Space SDK**:
-   - Choose **Gradio** 🟧 *(Free)*
-   - Choose Gradio template: **Blank** *(Free)*
-4. Under **Space hardware**:
-   - Keep default: **CPU basic · 2 vCPU · 16 GB · FREE**
-5. Set Visibility: **Public**
-6. Click **Create Space**.
+1. **Terminal 1 — Start the application server**:
+   ```bash
+   uvicorn backend.main:app --host 0.0.0.0 --port 8000
+   ```
+   *(This serves the full React frontend and FastAPI backend at `http://localhost:8000`)*
+
+2. **Terminal 2 — Launch the public Cloudflare tunnel**:
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+3. **Share the Link**:
+   Look at the terminal output for the generated URL:
+   ```text
+   +--------------------------------------------------------------------------------------------+
+   |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+   |  https://random-words-here.trycloudflare.com                                              |
+   +--------------------------------------------------------------------------------------------+
+   ```
+   Open that `https://...trycloudflare.com` link on your phone, laptop, or share it with the judges!
 
 ---
 
-### Push Your Code to Hugging Face:
+## ⚡ Method 2: Instant SSH Tunnel (Zero Install, Built-in Linux SSH)
 
-In your local terminal, add the Hugging Face remote and push your code:
-
-```bash
-# 1. Add Hugging Face Space as remote
-git remote add space https://huggingface.co/spaces/Prakyat/netra-prototype
-
-# 2. Push your branch to Hugging Face main
-git push space prakyat:main
-```
-
-> **Note on Authentication**: If prompted for a password during `git push`, use your **Hugging Face Access Token** (generate a free `Write` token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)).
-
-Once pushed, Hugging Face will install `requirements.txt`, run `app.py`, and your full dashboard will be live at:
-`https://prakyat-netra-prototype.hf.space`
-
----
-
-### Add Optional Gemini API Key on Hugging Face:
-To enable Google Gemini 2.5 Flash Vision OCR on uploaded handwritten documents:
-1. In your Space, click **Settings** (top right).
-2. Scroll to **Variables and secrets**.
-3. Click **New secret**:
-   - Name: `GEMINI_API_KEY`
-   - Value: *(your Gemini API key from [aistudio.google.com](https://aistudio.google.com/))*
-4. Click **Save**.
-
----
-
-## ⚡ Method 2: Cloudflare Tunnel (Instant Zero-Cost Hackathon / SIH Live Demo)
-
-If you are presenting to judges at **Smart India Hackathon (SIH)** or evaluating before a jury, running locally and sharing an instant public HTTPS link is the fastest and most dependable method (it runs at full speed with your local GPU/CPU with 0 cloud limitations):
+If you don't want to run any CLI tool, Linux has built-in SSH tunneling services:
 
 1. **Start the backend server**:
    ```bash
    uvicorn backend.main:app --host 0.0.0.0 --port 8000
    ```
 
-2. **Open a free Cloudflare Tunnel** in a second terminal (no signup, no credit card):
+2. **In a second terminal, run `localhost.run`**:
    ```bash
-   # Quick install (if not already installed):
-   curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-   sudo dpkg -i cloudflared.deb
-
-   # Launch public URL:
-   cloudflared tunnel --url http://localhost:8000
+   ssh -R 80:localhost:8000 nokey@localhost.run
    ```
-   *Cloudflare will print a secure URL like `https://xxxx.trycloudflare.com` that you can share with judges to test directly on their phones or laptops.*
+   *Prints a live `https://xxxx.lhr.life` public HTTPS link.*
 
-*(Alternative using ngrok)*:
-```bash
-ngrok http 8000
-```
+3. *(Alternative using Pinggy)*:
+   ```bash
+   ssh -p 443 -R0:localhost:8000 a.pinggy.io
+   ```
+
+4. *(Alternative using npx localtunnel)*:
+   ```bash
+   npx -y localtunnel --port 8000
+   ```
 
 ---
 
-## 🌐 Method 3: Render.com (Free Native Python Web Service)
+## 🌐 Method 3: Render.com (Free 24/7 Cloud Hosting)
 
-Render allows hosting Python FastAPI web apps directly from GitHub without Docker:
+If you want a standing 24/7 cloud server that stays online even when your laptop is closed:
 
-1. Go to **[render.com](https://render.com/)** and sign up for free.
+1. Go to **[render.com](https://render.com/)** and sign up for free (using GitHub).
 2. Click **New +** -> **Web Service**.
-3. Connect your GitHub repository (`sihpro`).
-4. Select:
+3. Connect your GitHub repository: `Prakyatshetty-1/netra` (already pushed and up to date!).
+4. Configure the service:
    - **Runtime**: `Python 3`
-   - **Branch**: `prakyat`
+   - **Branch**: `main`
    - **Build Command**:
      ```bash
      pip install -r requirements.txt
@@ -112,19 +93,19 @@ Render allows hosting Python FastAPI web apps directly from GitHub without Docke
      ```bash
      uvicorn backend.main:app --host 0.0.0.0 --port $PORT
      ```
-   - **Instance Type**: Free (512 MB)
+   - **Instance Type**: `Free`
 5. Under **Environment Variables**, add:
-   - `GEMINI_API_KEY`: `<your-key>`
+   - `GEMINI_API_KEY`: *(your Gemini key from [aistudio.google.com](https://aistudio.google.com/))*
 6. Click **Deploy Web Service**.
+   Render will deploy your app at: `https://netra-xxxx.onrender.com`.
 
 ---
 
-## 📋 Pre-Deployment Test Command
+## 📋 Quick Local Verification
 
-Before pushing, verify everything passes locally:
+Before presenting or deploying, verify all backend routes and integration tests pass:
 
 ```bash
-# Verify all integration and unit tests pass
 pytest
 ```
-*(All 6 tests should report green passing status)*
+*(All 6 integration and crop tests should pass with 100% green status)*
