@@ -2,6 +2,7 @@ import axios from "axios";
 
 export const BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+
 export function apiError(err) {
   const detail = err?.response?.data?.detail;
   if (typeof detail === "string") return detail;
@@ -64,3 +65,30 @@ export const uploadImage = (caseId, file) => {
 
 export const confirmImageExtraction = (caseId, payload) =>
   axios.post(`${BASE}/cases/${caseId}/upload-image/confirm`, payload).then((r) => r.data);
+
+export const uploadOcrDocument = (caseId, file, useGemini = false, apiKey = "") => {
+  const form = new FormData();
+  form.append("file", file);
+  if (useGemini) form.append("use_gemini", "true");
+  if (apiKey) form.append("api_key", apiKey);
+  const headers = apiKey ? { "X-Gemini-API-Key": apiKey } : {};
+  return axios.post(`${BASE}/cases/${caseId}/ocr/upload`, form, { headers }).then((r) => r.data);
+};
+
+export const verifyOcrLines = (caseId, payload) =>
+  axios.post(`${BASE}/cases/${caseId}/ocr/verify`, payload).then((r) => r.data);
+
+export const getOcrDocument = (caseId, docId) =>
+  axios.get(`${BASE}/cases/${caseId}/ocr/documents/${docId}`).then((r) => r.data);
+
+export const uploadCctvVideo = (caseId, file, sampleRateSec = 1.0, confThreshold = 0.50) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("sample_rate_sec", sampleRateSec);
+  form.append("confidence_threshold", confThreshold);
+  return axios.post(`${BASE}/cases/${caseId}/cctv/upload`, form).then((r) => r.data);
+};
+
+export const getCctvVideo = (caseId, videoId) =>
+  axios.get(`${BASE}/cases/${caseId}/cctv/${videoId}`).then((r) => r.data);
+

@@ -10,6 +10,8 @@ from typing import Any, Iterable, Sequence
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "netra_sim.db"
 AUDIT_LOG_PATH = ROOT / "audit_log.jsonl"
+DOCUMENTS_DIR = ROOT / "uploads" / "documents"
+DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_conn() -> sqlite3.Connection:

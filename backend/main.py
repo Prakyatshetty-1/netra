@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.routers import (
     cases,
     casedna,
+    cctv,
     contradiction,
     copilot,
     counterfactual,
@@ -52,11 +53,19 @@ app.include_router(copilot.router)
 app.include_router(decisions.router)
 app.include_router(extraction.router)
 app.include_router(image_upload.router)
+app.include_router(cctv.router)
+
+
+from backend.db import DOCUMENTS_DIR
+from backend.services.cctv_service import CCTV_DIR
 
 app.mount("/annotated", StaticFiles(directory=ANNOTATED_DIR), name="annotated")
 app.mount("/static/crops", StaticFiles(directory=CROPS_DIR), name="static_crops")
 app.mount("/crops", StaticFiles(directory=CROPS_DIR), name="crops")
+app.mount("/uploaded_docs/cctv", StaticFiles(directory=CCTV_DIR), name="uploaded_cctv")
+app.mount("/uploaded_docs", StaticFiles(directory=DOCUMENTS_DIR), name="uploaded_docs")
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
+
 
 
 @app.get("/")

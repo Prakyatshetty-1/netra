@@ -9,6 +9,9 @@ export default defineConfig({
       "/annotated": "http://localhost:8000",
       "/static": "http://localhost:8000",
       "/crops": "http://localhost:8000",
+      "/uploaded_docs": "http://localhost:8000",
+      "/cases": "http://localhost:8000",
+
     },
   },
 });
