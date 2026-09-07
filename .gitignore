@@ -9,6 +9,10 @@ annotated/
 frontend/crops/
 crops/
 
+# Uploaded evidence runtime files
+uploads/
+
+
 # Python
 __pycache__/
 **/__pycache__/
