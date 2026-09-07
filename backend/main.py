@@ -68,7 +68,15 @@ app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
 
+DIST_DIR = FRONTEND / "dist"
+if (DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
+
 @app.get("/")
 def index():
+    if (DIST_DIR / "index.html").exists():
+        return FileResponse(DIST_DIR / "index.html")
     return FileResponse(FRONTEND / "index.html")
+
 
