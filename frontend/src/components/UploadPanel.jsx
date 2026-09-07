@@ -13,7 +13,7 @@ const REL_TYPES = [
 function toFullUrl(url) {
   if (!url) return "";
   if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
-  const base = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  const base = import.meta.env.VITE_API_BASE_URL ?? "";
   return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
