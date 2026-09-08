@@ -87,8 +87,10 @@ If you want a standing 24/7 cloud server that stays online even when your laptop
    - **Branch**: `main`
    - **Build Command**:
      ```bash
-     pip install -r requirements.txt
+     pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir -r requirements.txt
      ```
+     > **💡 Why this Build Command is required on Render**:
+     > Standard PyTorch downloads ~7 GB of CUDA/GPU binaries which blows past Render's 8 GB free disk quota. The command above installs lightweight CPU-only PyTorch with `--no-cache-dir`, shrinking total disk usage from **8.5 GB down to 1.1 GB**!
    - **Start Command**:
      ```bash
      uvicorn backend.main:app --host 0.0.0.0 --port $PORT
