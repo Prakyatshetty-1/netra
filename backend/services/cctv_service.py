@@ -321,11 +321,13 @@ def get_cctv_video_details(video_id: str) -> dict | None:
         c = d["ClassName"]
         summary_counts[c] = summary_counts.get(c, 0) + 1
 
+    cctv_path_str = str(row["FilePath"]).replace("\\", "/")
+    cctv_filename = Path(cctv_path_str).name
     return {
         "video_id": row["VideoID"],
         "case_id": row["CaseMasterID"],
         "filename": row["Filename"],
-        "video_url": f"/uploaded_docs/cctv/{Path(row['FilePath'].replace('\\', '/')).name}",
+        "video_url": f"/uploaded_docs/cctv/{cctv_filename}",
         "file_hash_sha256": row["FileHashSHA256"],
         "file_size": row["FileSize"],
         "duration_seconds": row["DurationSeconds"],
